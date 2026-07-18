@@ -32,11 +32,13 @@ function pnlClass(n: number | null | undefined): string {
 const STRATEGY_LABEL: Record<string, string> = {
   favorite_dip: "Favorite dip",
   underdog_momentum: "Underdog momentum",
+  underdog_pre_match: "Underdog pre-match",
 };
 
 const EXIT_REASON_LABEL: Record<string, string> = {
   take_profit: "Take profit",
   stop_loss: "Stop loss",
+  trail_stop: "Trailing exit",
   resolution_win: "Resolution (won)",
   resolution_loss: "Resolution (lost)",
 };
@@ -71,7 +73,7 @@ export default async function Home() {
           <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
             Strategy comparison
           </h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {STRATEGY_NAMES.map((name) => (
               <StrategyCard
                 key={name}

@@ -3,7 +3,7 @@ import { db } from "./db";
 import { trackedMatches, trades, priceSnapshots } from "./schema";
 import { STRATEGY_CONFIG, STRATEGY_NAMES, type StrategyName } from "./config";
 import {
-  discoverLiveTennisMatches,
+  discoverTrackableMatches,
   getPriceReading,
   getMatchState,
   isMarketClosed,
@@ -113,6 +113,7 @@ async function pollTrackedMatch(match: TrackedMatch) {
       playerName: match.playerName,
       entryPrice: entryFill,
       entryAt: now,
+      peakPrice: mid, // trailing high-water mark tracks the mid price
       stake: STRATEGY_CONFIG.STAKE_USD,
       fees: entryFee,
       tradeDate: dateKey(now),
@@ -127,8 +128,15 @@ async function pollTrackedMatch(match: TrackedMatch) {
   if (match.status === "entered") {
     const openTrade = await openTradeFor(match.id);
     if (!openTrade) return;
+
+    // Update the trailing high-water mark (mid price) before deciding.
+    const peak = Math.max(openTrade.peakPrice ?? openTrade.entryPrice, mid);
+    if (peak !== openTrade.peakPrice) {
+      await db.update(trades).set({ peakPrice: peak }).where(eq(trades.id, openTrade.id));
+    }
+
     // Decisions use the mid price; the fill then pays the spread.
-    const decision = decideExit(cfg, mid, openTrade.entryPrice);
+    const decision = decideExit(cfg, mid, openTrade.entryPrice, peak);
     if (decision.action === "hold") return;
 
     const exitFill = sellFill(side, mid, reading.longBid, reading.longAsk);
@@ -161,7 +169,7 @@ async function discoverAndTrack() {
 
   const trackedKeys = new Set(openMatches.map((m) => `${m.marketSlug}::${m.strategy}`));
 
-  const candidates = await discoverLiveTennisMatches();
+  const candidates = await discoverTrackableMatches();
 
   for (const candidate of candidates) {
     if (slotsAvailable <= 0) break;

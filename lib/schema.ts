@@ -10,7 +10,7 @@ export const trackedMatches = sqliteTable(
   {
     id: text("id").primaryKey(),
     strategy: text("strategy", {
-      enum: ["favorite_dip", "underdog_momentum"],
+      enum: ["favorite_dip", "underdog_momentum", "underdog_pre_match"],
     }).notNull(),
     eventSlug: text("event_slug").notNull(),
     marketSlug: text("market_slug").notNull(),
@@ -36,7 +36,7 @@ export const trades = sqliteTable("trades", {
     .notNull()
     .references(() => trackedMatches.id),
   strategy: text("strategy", {
-    enum: ["favorite_dip", "underdog_momentum"],
+    enum: ["favorite_dip", "underdog_momentum", "underdog_pre_match"],
   }).notNull(),
   eventSlug: text("event_slug").notNull(),
   marketSlug: text("market_slug").notNull(),
@@ -44,10 +44,12 @@ export const trades = sqliteTable("trades", {
   playerName: text("player_name").notNull(),
   entryPrice: real("entry_price").notNull(),
   entryAt: integer("entry_at").notNull(),
+  /** Highest price of the tracked side seen since entry (for trailing exits). */
+  peakPrice: real("peak_price"),
   exitPrice: real("exit_price"),
   exitAt: integer("exit_at"),
   exitReason: text("exit_reason", {
-    enum: ["take_profit", "stop_loss", "resolution_win", "resolution_loss"],
+    enum: ["take_profit", "stop_loss", "trail_stop", "resolution_win", "resolution_loss"],
   }),
   stake: real("stake").notNull(),
   /** Total taker fees paid across entry + exit legs (USD). */

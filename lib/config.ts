@@ -1,66 +1,57 @@
 /**
  * Tunable strategy constants for the tennis swing bot (v1, paper trading only).
  *
- * Two strategies run in parallel, every trade tagged with which one made it so
- * the dashboard can compare them:
+ * Three strategies run in parallel, every trade tagged with which one made it
+ * so the dashboard can compare them:
  *
- *  - favorite_dip:       buy the pre-match favorite after a price DIP
- *                        (mean-reversion — bet the favorite recovers).
- *  - underdog_momentum:  buy a cheap pre-match underdog that is RISING off its
- *                        opening (longshot + momentum), and take profit early.
+ *  - favorite_dip:       buy the pre-match favorite after a price DIP once a
+ *                        set has completed (bet the favorite recovers).
+ *  - underdog_momentum:  buy a cheap underdog that has won a set and is RISING
+ *                        off its opening (confirmed momentum), take profit early.
+ *  - underdog_pre_match: buy a cheap underdog BEFORE/at the start (no signal),
+ *                        then ride it with a trailing exit — sell once it slips
+ *                        off its peak. Highest variance; the exit is the edge.
  *
- * "Wide open, log everything" mode: entries cast a wide net and exits are
- * RELATIVE (% move from entry) rather than fixed price zones, because a fixed
- * target like "sell at 0.50" is meaningless once you enter anywhere from 0.10
- * to 0.55. Relative exits scale across the whole range and match the
- * "lock in profit once it's worth it" mindset.
+ * "Wide open, log everything": entries cast a wide net, every trade is tagged
+ * and bucketed by entry price, so the DATA reveals the best rails.
  *
- * Adjust freely after reviewing results — the engine reads everything from here.
+ * Exits are RELATIVE (% from entry) or TRAILING (% off the peak since entry),
+ * never fixed price zones — those don't scale across a wide entry range.
  */
 
-export type StrategyName = "favorite_dip" | "underdog_momentum";
+export type StrategyName = "favorite_dip" | "underdog_momentum" | "underdog_pre_match";
 
 export interface StrategyConfig {
   enabled: boolean;
   /** Which side of the match this strategy trades, by its opening price. */
   track: "favorite" | "underdog";
-  /** A side only counts as favorite/underdog if its opening price clears this. */
+  /** A side only counts as favorite/underdog if the favorite's opening clears this. */
   openingThreshold: number;
   /** Buy only if the tracked side's current price falls in this (wide) band. */
   entryMin: number;
   entryMax: number;
-  /**
-   * Directional confirmation vs. the opening price:
-   *  - "dip":       enter only if current < opening (favorite has fallen)
-   *  - "rise":      enter only if current > opening (underdog has climbed)
-   *  - "none":      no directional filter
-   */
+  /** Directional confirmation vs. opening: "dip" (fell), "rise" (climbed), "none". */
   entryDirection: "dip" | "rise" | "none";
-  /** Take profit once price is up this fraction from entry (0.35 = +35%). */
-  takeProfitPct: number;
-  /** Stop loss once price is down this fraction from entry (0.30 = -30%). */
-  stopLossPct: number;
-  /**
-   * Require at least this many COMPLETED sets before entering — the real
-   * signal. favorite_dip wants set 1 finished (favorite behind); underdog
-   * momentum wants the underdog to have actually won a set. Gating on real
-   * set state (not just price) filters mid-set noise and avoids buying into a
-   * set-1 injury collapse.
-   */
+  /** Require at least this many COMPLETED sets before entering. */
   minCompletedSets: number;
+  /** Optional: do NOT enter once more than this many sets have completed. */
+  maxCompletedSets?: number;
+  /** Exit style: fixed %-from-entry, or trailing %-off-peak. */
+  exitStyle: "relative" | "trailing";
+  /** Relative exit: take profit once up this fraction from entry. */
+  takeProfitPct?: number;
+  /** Relative exit: stop loss once down this fraction from entry. */
+  stopLossPct?: number;
+  /** Trailing exit: sell once price falls this fraction below its peak since entry. */
+  trailPct?: number;
 }
 
 /**
- * Real-world friction so paper P/L isn't rosy. Both are modeled from live data:
+ * Real-world friction so paper P/L isn't rosy. Both modeled from live data:
  *  - spread: buy at the ask, sell at the bid (from the bbo endpoint)
  *  - fees:   Polymarket's exact taker formula, Fee = coeff × shares × p × (1-p)
- *
- * No fee/spread is applied to hold-to-resolution exits, because settlement is
- * not a taker trade on Polymarket.
- *
- * Taker (not maker) is assumed on both legs as the conservative case; resting
- * limit orders could instead earn the maker rebate, but assuming taker keeps
- * the simulation honest rather than optimistic.
+ * No fee/spread on hold-to-resolution (settlement isn't a taker trade).
+ * Taker assumed on both legs (conservative; resting limits could earn the rebate).
  */
 export const FRICTION = {
   applySpread: true,
@@ -72,12 +63,17 @@ export const STRATEGY_CONFIG = {
   // Flat stake per simulated trade (USD).
   STAKE_USD: 2,
 
-  // Max number of (match × strategy) positions tracked at once. Raised well
-  // above the original 3–4 because this is paper trading — no capital limit,
-  // and more concurrent tracking means more learning data per day.
-  MAX_CONCURRENT: 20,
+  // Max (match × strategy) positions tracked at once. High because it's paper —
+  // no capital limit, and more concurrency means more learning data.
+  MAX_CONCURRENT: 30,
 
-  // How often the poll runs (informational; real schedule is the GitHub Action).
+  // How far ahead to look for not-yet-started matches (for pre-match entries).
+  UPCOMING_WINDOW_HOURS: 3,
+
+  // How far back a match's start can be and still be considered live (drops the
+  // Polymarket gateway's stale "live" flags on long-finished matches).
+  LIVE_LOOKBACK_HOURS: 12,
+
   POLL_INTERVAL_MINUTES: 5,
 
   strategies: {
@@ -88,24 +84,36 @@ export const STRATEGY_CONFIG = {
       entryMin: 0.12,
       entryMax: 0.45,
       entryDirection: "dip",
+      minCompletedSets: 1,
+      exitStyle: "relative",
       takeProfitPct: 0.35,
       stopLossPct: 0.3,
-      minCompletedSets: 1,
     },
     underdog_momentum: {
       enabled: true,
       track: "underdog",
-      openingThreshold: 0.55, // favorite side must clear this, so underdog <= 0.45
+      openingThreshold: 0.55,
       entryMin: 0.1,
       entryMax: 0.55,
       entryDirection: "rise",
+      minCompletedSets: 1,
+      exitStyle: "relative",
       takeProfitPct: 0.35,
       stopLossPct: 0.3,
-      minCompletedSets: 1,
+    },
+    underdog_pre_match: {
+      enabled: true,
+      track: "underdog",
+      openingThreshold: 0.55, // favorite >= 0.55, so underdog <= 0.45
+      entryMin: 0.1,
+      entryMax: 0.45,
+      entryDirection: "none", // no signal — this is the pre-match longshot bet
+      minCompletedSets: 0,
+      maxCompletedSets: 0, // only enter before set 1 finishes (pre-match / early)
+      exitStyle: "trailing",
+      trailPct: 0.18, // sell once it slips 18% off its highest price since entry
     },
   } satisfies Record<StrategyName, StrategyConfig>,
 } as const;
 
-export const STRATEGY_NAMES = Object.keys(
-  STRATEGY_CONFIG.strategies
-) as StrategyName[];
+export const STRATEGY_NAMES = Object.keys(STRATEGY_CONFIG.strategies) as StrategyName[];

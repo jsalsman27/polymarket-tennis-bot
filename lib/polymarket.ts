@@ -12,16 +12,20 @@ import { PolymarketUS } from "polymarket-us";
  * are used in place of the SDK's declared types for the fields we rely on.
  */
 
+import { STRATEGY_CONFIG } from "./config";
+
 const client = new PolymarketUS();
 
 // Tennis tours to watch. ITF tour tags (itfm/itfw) exist too but tend to have
 // thin liquidity; start with the two main tours and extend TENNIS_TAGS if needed.
 const TENNIS_TAGS = ["atp", "wta"] as const;
 
-// The gateway occasionally leaves `live: true` set on events well after they've
-// actually finished (observed empirically). Ignore anything whose reported
-// start time is older than this, as a defensive staleness guard.
-const STALE_EVENT_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+// How far back a start time can be and still count as a real live match (drops
+// the gateway's stale "live" flags left on long-finished matches).
+const LIVE_LOOKBACK_MS = STRATEGY_CONFIG.LIVE_LOOKBACK_HOURS * HOUR_MS;
+// How far ahead to surface not-yet-started matches (for pre-match entries).
+const UPCOMING_WINDOW_MS = STRATEGY_CONFIG.UPCOMING_WINDOW_HOURS * HOUR_MS;
 
 interface Amount {
   value: string;
@@ -109,24 +113,31 @@ function toNumber(amount: Amount | null | undefined): number | null {
 }
 
 /**
- * Discover currently in-play ATP/WTA singles matches with an active
- * moneyline market. Filters out stale "live" flags left over from finished
- * matches (see STALE_EVENT_MAX_AGE_MS above).
+ * Discover trackable ATP/WTA singles matches with an active moneyline market:
+ * both currently in-play matches AND matches starting soon (so the pre-match
+ * strategy can enter ahead of time). Uses the start-time window to drop the
+ * gateway's stale "live" flags on long-finished matches.
  */
-export async function discoverLiveTennisMatches(): Promise<LiveTennisMatch[]> {
+export async function discoverTrackableMatches(): Promise<LiveTennisMatch[]> {
   const matches: LiveTennisMatch[] = [];
+  const now = Date.now();
+  const startMin = new Date(now - LIVE_LOOKBACK_MS).toISOString();
+  const startMax = new Date(now + UPCOMING_WINDOW_MS).toISOString();
 
   for (const tag of TENNIS_TAGS) {
     const res = await client.get<RawEventsResponse>("/v1/events", {
-      query: { tagSlug: tag, live: true, closed: false, limit: 25 },
+      query: {
+        tagSlug: tag,
+        closed: false,
+        startTimeMin: startMin,
+        startTimeMax: startMax,
+        limit: 50,
+      },
     });
 
     for (const event of res.events ?? []) {
-      if (!event.live || event.closed) continue;
-      if (event.period === "FT") continue;
-
-      const startedAt = event.startTime ? new Date(event.startTime).getTime() : 0;
-      if (!startedAt || Date.now() - startedAt > STALE_EVENT_MAX_AGE_MS) continue;
+      if (event.closed) continue;
+      if (event.period === "FT") continue; // finished
 
       const market = (event.markets ?? []).find((m) => m.marketType === "moneyline");
       if (!market || market.closed) continue;

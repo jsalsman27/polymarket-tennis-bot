@@ -76,8 +76,11 @@ export function decideEntry(
   openingPrice: number,
   completedSets: number
 ): EntryDecision {
-  // Real-signal gate: a set must actually have completed.
+  // Set-state gate: min (real-signal) and optional max (pre-match only).
   if (completedSets < cfg.minCompletedSets) return { action: "wait" };
+  if (cfg.maxCompletedSets !== undefined && completedSets > cfg.maxCompletedSets) {
+    return { action: "wait" };
+  }
   if (currentPrice < cfg.entryMin || currentPrice > cfg.entryMax) {
     return { action: "wait" };
   }
@@ -93,20 +96,34 @@ export function decideEntry(
 export type ExitDecision =
   | { action: "take_profit" }
   | { action: "stop_loss" }
+  | { action: "trail_stop" }
   | { action: "hold" };
 
-/** Relative (% move from entry) take-profit / stop-loss. */
+/**
+ * Exit decision, honoring the strategy's exit style:
+ *  - "relative": fixed take-profit / stop-loss vs. entry.
+ *  - "trailing": sell once price slips trailPct below its peak since entry
+ *    (ride momentum, exit on stall/drop). `peakPrice` is the high-water mark.
+ */
 export function decideExit(
   cfg: StrategyConfig,
   currentPrice: number,
-  entryPrice: number
+  entryPrice: number,
+  peakPrice: number
 ): ExitDecision {
-  if (currentPrice >= entryPrice * (1 + cfg.takeProfitPct)) {
-    return { action: "take_profit" };
+  if (cfg.exitStyle === "trailing") {
+    const trail = cfg.trailPct ?? 0.15;
+    if (currentPrice <= peakPrice * (1 - trail)) {
+      return { action: "trail_stop" };
+    }
+    return { action: "hold" };
   }
-  if (currentPrice <= entryPrice * (1 - cfg.stopLossPct)) {
-    return { action: "stop_loss" };
-  }
+
+  // relative
+  const tp = cfg.takeProfitPct ?? Infinity;
+  const sl = cfg.stopLossPct ?? Infinity;
+  if (currentPrice >= entryPrice * (1 + tp)) return { action: "take_profit" };
+  if (currentPrice <= entryPrice * (1 - sl)) return { action: "stop_loss" };
   return { action: "hold" };
 }
 
