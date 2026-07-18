@@ -1,36 +1,119 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Polymarket Tennis Swing Bot — v1 (Paper Trading)
 
-## Getting Started
+Simulates a tennis in-play swing-trading strategy against live Polymarket US
+prices. **No real orders are ever placed and no funds move** — this is a
+paper-trading harness only.
 
-First, run the development server:
+## Strategy (v1)
+
+1. **Discover**: poll ATP/WTA singles matches currently live on Polymarket US.
+2. **Baseline**: on first sighting of a live match, record the current price
+   of whichever side is above 0.50 as the "pre-match favorite" and its price.
+3. **Entry**: buy (simulated) the favorite if its price falls into
+   **0.28–0.35** (proxy for "favorite lost set 1" — see [Assumptions](#assumptions-and-open-questions)).
+4. **Exit**: sell at **0.48–0.52** (take profit) or **0.15–0.18** (stop
+   loss); if neither is hit before the match ends, hold to settlement (1.0/0.0).
+5. One entry per match, flat $2 stake, max 4 matches tracked concurrently.
+
+All thresholds live in [`lib/config.ts`](lib/config.ts) — tune them without
+touching the engine.
+
+## Stack
+
+- Next.js 16 (App Router), deployed to Vercel
+- Vercel Cron (`vercel.json`) hits `/api/cron/poll` every 5 minutes
+- Polymarket US public gateway (`polymarket-us` SDK) for read-only market
+  data — no API key, no wallet signing anywhere in this codebase
+- Drizzle ORM over libSQL (SQLite-compatible), used identically in dev and prod
+
+## Local dev (Codespaces)
 
 ```bash
+npm install
+npm run db:push   # creates data/dev.db from lib/schema.ts
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Visit the dev server for the dashboard. To manually trigger a poll cycle
+(instead of waiting on cron) once the dev server is running:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+curl http://localhost:3000/api/cron/poll
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploying to Vercel
 
-## Learn More
+### 1. Persistence — swap SQLite file for a hosted libSQL DB
 
-To learn more about Next.js, take a look at the following resources:
+Vercel's serverless filesystem doesn't persist writes across invocations, so
+the local `data/dev.db` file approach only works in Codespaces. Before
+deploying:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Create a free [Turso](https://turso.tech) database (`turso db create
+   tennis-bot`, or any libSQL-compatible host).
+2. In the Vercel project settings, set:
+   - `DATABASE_URL` → e.g. `libsql://tennis-bot-<org>.turso.io`
+   - `DATABASE_AUTH_TOKEN` → your Turso auth token
+3. Run `npm run db:push` once locally with those same env vars set, to apply
+   the schema to the hosted DB.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+No code changes needed — [`lib/db.ts`](lib/db.ts) already reads
+`DATABASE_URL`/`DATABASE_AUTH_TOKEN` and falls back to the local file only
+when they're unset.
 
-## Deploy on Vercel
+### 2. Cron frequency and the Vercel Hobby plan
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+`vercel.json` schedules polling every 5 minutes. **Vercel's free Hobby plan
+currently limits cron jobs to one run per day**, which is too infrequent for
+in-play tennis. Options:
+- Upgrade to a Vercel Pro plan (supports minute-level cron), or
+- Keep the app on Hobby and trigger `/api/cron/poll` from an external
+  scheduler (e.g. a GitHub Actions workflow on a cron schedule, or a free
+  service like cron-job.org) hitting your deployed URL every few minutes.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 3. Optional: protect the poll endpoint
+
+Set a `CRON_SECRET` env var in Vercel; the route then requires
+`Authorization: Bearer <CRON_SECRET>` (which Vercel Cron sends
+automatically). Leave it unset for open/local testing.
+
+## Assumptions and open questions
+
+- **Entry signal is a price proxy, not live scores.** Per the original brief,
+  "favorite lost set 1" is detected via a price drop into 0.28–0.35 rather
+  than a separate live-scores feed — this matches how trades have been made
+  manually. Worth knowing: the Polymarket US events API already returns a
+  `period` field (e.g. `"S1"`, `"FT"`) with actual set-level match state on
+  every event we poll. A v1.5 could cross-reference `period` for a sharper
+  signal at effectively no extra integration cost, since we're already
+  fetching it.
+- **"Pre-match favorite" is approximated from first-observed price**, not a
+  true pre-match line, since the bot only starts tracking a match once it's
+  already live. If polling starts well after the match begins, the baseline
+  could already reflect in-game movement. Matches with no clear favorite
+  (price within ~0.02 of 0.50) are skipped rather than guessed at.
+- **Only ATP and WTA tour tags are watched by default** (`lib/polymarket.ts`,
+  `TENNIS_TAGS`). ITF tour tags (`itfm`, `itfw`) exist on Polymarket US too
+  but tend to be thinner markets — add them to `TENNIS_TAGS` if broader
+  coverage is wanted.
+- **The `polymarket-us` npm SDK (v0.1.1) ships TypeScript response types that
+  don't match the live API** (missing `marketSides`, `live`, `period`;
+  prices nested as `{ value, currency }` rather than flat numbers). All types
+  in `lib/polymarket.ts` were derived by querying the live gateway directly
+  rather than trusting the bundled `.d.ts` files — worth re-verifying if the
+  SDK gets a version bump.
+- **Which Polymarket account/API this targets was confirmed as Polymarket US**
+  (CFTC-regulated, `gateway.polymarket.us`) at build time — if that ever
+  changes to the offshore Polymarket.com product, the API surface and base
+  URLs in `lib/polymarket.ts` would need to change too.
+
+## Project structure
+
+- `lib/config.ts` — tunable strategy constants
+- `lib/polymarket.ts` — read-only Polymarket US gateway client
+- `lib/strategy.ts` — pure entry/exit decision functions
+- `lib/engine.ts` — orchestrates discovery + polling + simulated trade bookkeeping
+- `lib/schema.ts` / `lib/db.ts` — Drizzle schema and DB client
+- `lib/stats.ts` — dashboard aggregation (P/L, win rate, etc.)
+- `app/api/cron/poll/route.ts` — the Vercel Cron entry point
+- `app/page.tsx` — dashboard

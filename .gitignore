@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local sqlite db (dev only — see README for prod persistence setup)
+/data/*.db
+/data/*.db-*
