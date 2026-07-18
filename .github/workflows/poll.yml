@@ -1,0 +1,25 @@
+name: Poll Polymarket
+
+# Drives the paper-trading poll cycle every 5 minutes by hitting the deployed
+# /api/cron/poll endpoint. Used instead of Vercel Cron because the Vercel Hobby
+# plan only allows one cron run per day. The CRON_SECRET repo secret authorizes
+# the request; the endpoint rejects calls without it.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # allows manual "Run workflow" from the Actions tab
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger poll cycle
+        run: |
+          code=$(curl -s -o /tmp/body.txt -w "%{http_code}" --max-time 60 \
+            "https://polymarket-bot-indol.vercel.app/api/cron/poll" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "HTTP $code"
+          cat /tmp/body.txt
+          echo
+          test "$code" = "200"
