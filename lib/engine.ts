@@ -1,42 +1,52 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "./db";
 import { trackedMatches, trades, priceSnapshots } from "./schema";
-import { STRATEGY_CONFIG } from "./config";
+import { STRATEGY_CONFIG, STRATEGY_NAMES, type StrategyName } from "./config";
 import {
   discoverLiveTennisMatches,
   getPriceReading,
   isMarketClosed,
   getSettlement,
-  favoritePrice,
 } from "./polymarket";
-import { determineFavoriteSide, decideEntry, decideExit, computePnl } from "./strategy";
+import {
+  sidePrice,
+  sideToTrack,
+  decideEntry,
+  decideExit,
+  computePnl,
+  getStrategyConfig,
+  type Side,
+} from "./strategy";
 
 const OPEN_STATUSES = ["watching", "entered"] as const;
+
+type TrackedMatch = typeof trackedMatches.$inferSelect;
 
 function dateKey(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-async function closeAsResolved(match: typeof trackedMatches.$inferSelect, now: number) {
+async function openTradeFor(matchId: string) {
+  return db
+    .select()
+    .from(trades)
+    .where(and(eq(trades.matchId, matchId), isNull(trades.exitAt)))
+    .get();
+}
+
+async function closeAsResolved(match: TrackedMatch, now: number) {
   const settlement = await getSettlement(match.marketSlug);
-  // Fall back to 0.5 (push) if settlement isn't available yet — shouldn't normally happen
-  // once the book has emptied out, but avoids leaving a trade open forever.
-  const longSettlement = settlement ?? 0.5;
-  const finalFavoritePrice = favoritePrice(longSettlement, match.favoriteSide as "long" | "short");
+  const longSettlement = settlement ?? 0.5; // push fallback if unavailable
+  const finalPrice = sidePrice(longSettlement, match.side as Side);
 
   if (match.status === "entered") {
-    const openTrade = await db
-      .select()
-      .from(trades)
-      .where(and(eq(trades.matchId, match.id), isNull(trades.exitAt)))
-      .get();
-
+    const openTrade = await openTradeFor(match.id);
     if (openTrade) {
-      const pnl = computePnl(openTrade.entryPrice, finalFavoritePrice, openTrade.stake);
+      const pnl = computePnl(openTrade.entryPrice, finalPrice, openTrade.stake);
       await db
         .update(trades)
         .set({
-          exitPrice: finalFavoritePrice,
+          exitPrice: finalPrice,
           exitAt: now,
           exitReason: pnl >= 0 ? "resolution_win" : "resolution_loss",
           pnl,
@@ -51,43 +61,36 @@ async function closeAsResolved(match: typeof trackedMatches.$inferSelect, now: n
     .where(eq(trackedMatches.id, match.id));
 }
 
-async function pollTrackedMatch(match: typeof trackedMatches.$inferSelect) {
+async function pollTrackedMatch(match: TrackedMatch) {
   const now = Date.now();
+  const cfg = getStrategyConfig(match.strategy as StrategyName);
   const reading = await getPriceReading(match.marketSlug);
   const price =
-    reading.longPrice !== null
-      ? favoritePrice(reading.longPrice, match.favoriteSide as "long" | "short")
-      : null;
+    reading.longPrice !== null ? sidePrice(reading.longPrice, match.side as Side) : null;
 
   if (price !== null) {
-    await db.insert(priceSnapshots).values({
-      matchId: match.id,
-      price,
-      observedAt: now,
-    });
+    await db.insert(priceSnapshots).values({ matchId: match.id, price, observedAt: now });
   }
 
   if (reading.looksResolved) {
-    const closed = await isMarketClosed(match.marketSlug);
-    if (closed) {
+    if (await isMarketClosed(match.marketSlug)) {
       await closeAsResolved(match, now);
-      return;
     }
-    // Book is momentarily empty but market isn't closed yet (e.g. between games) — skip this tick.
     return;
   }
 
   if (price === null) return;
 
   if (match.status === "watching") {
-    const decision = decideEntry(price);
-    if (decision.action === "enter") {
+    if (decideEntry(cfg, price, match.openingPrice).action === "enter") {
       await db.insert(trades).values({
         id: crypto.randomUUID(),
         matchId: match.id,
+        strategy: match.strategy,
         eventSlug: match.eventSlug,
         marketSlug: match.marketSlug,
         label: match.label,
+        playerName: match.playerName,
         entryPrice: price,
         entryAt: now,
         stake: STRATEGY_CONFIG.STAKE_USD,
@@ -102,25 +105,15 @@ async function pollTrackedMatch(match: typeof trackedMatches.$inferSelect) {
   }
 
   if (match.status === "entered") {
-    const decision = decideExit(price);
-    if (decision.action === "hold") return;
-
-    const openTrade = await db
-      .select()
-      .from(trades)
-      .where(and(eq(trades.matchId, match.id), isNull(trades.exitAt)))
-      .get();
+    const openTrade = await openTradeFor(match.id);
     if (!openTrade) return;
+    const decision = decideExit(cfg, price, openTrade.entryPrice);
+    if (decision.action === "hold") return;
 
     const pnl = computePnl(openTrade.entryPrice, price, openTrade.stake);
     await db
       .update(trades)
-      .set({
-        exitPrice: price,
-        exitAt: now,
-        exitReason: decision.action,
-        pnl,
-      })
+      .set({ exitPrice: price, exitAt: now, exitReason: decision.action, pnl })
       .where(eq(trades.id, openTrade.id));
     await db
       .update(trackedMatches)
@@ -136,44 +129,55 @@ async function discoverAndTrack() {
     .from(trackedMatches)
     .where(inArray(trackedMatches.status, [...OPEN_STATUSES]));
 
-  const trackedSlugs = new Set(openMatches.map((m) => m.marketSlug));
-  let slotsAvailable = STRATEGY_CONFIG.MAX_CONCURRENT_MATCHES - openMatches.length;
+  let slotsAvailable = STRATEGY_CONFIG.MAX_CONCURRENT - openMatches.length;
   if (slotsAvailable <= 0) return;
+
+  // Existing tracking units keyed by "marketSlug::strategy" to avoid duplicates.
+  const trackedKeys = new Set(openMatches.map((m) => `${m.marketSlug}::${m.strategy}`));
 
   const candidates = await discoverLiveTennisMatches();
 
   for (const candidate of candidates) {
     if (slotsAvailable <= 0) break;
-    if (trackedSlugs.has(candidate.marketSlug)) continue;
 
     const reading = await getPriceReading(candidate.marketSlug);
     if (reading.longPrice === null) continue;
 
-    const favoriteSide = determineFavoriteSide(reading.longPrice);
-    if (!favoriteSide) continue; // no clear pre-match favorite yet; reconsider next poll
+    for (const strategyName of STRATEGY_NAMES) {
+      if (slotsAvailable <= 0) break;
+      const cfg = getStrategyConfig(strategyName);
+      if (!cfg.enabled) continue;
 
-    const favoriteName = favoriteSide === "long" ? candidate.longName : candidate.shortName;
-    const openingPrice = favoritePrice(reading.longPrice, favoriteSide);
+      const key = `${candidate.marketSlug}::${strategyName}`;
+      if (trackedKeys.has(key)) continue;
 
-    await db.insert(trackedMatches).values({
-      id: crypto.randomUUID(),
-      eventSlug: candidate.eventSlug,
-      marketSlug: candidate.marketSlug,
-      label: candidate.label,
-      openingPrice,
-      favoriteSide,
-      favoriteName,
-      status: "watching",
-      createdAt: now,
-      updatedAt: now,
-    });
+      const side = sideToTrack(cfg, reading.longPrice);
+      if (!side) continue;
 
-    trackedSlugs.add(candidate.marketSlug);
-    slotsAvailable -= 1;
+      const openingPrice = sidePrice(reading.longPrice, side);
+      const playerName = side === "long" ? candidate.longName : candidate.shortName;
+
+      await db.insert(trackedMatches).values({
+        id: crypto.randomUUID(),
+        strategy: strategyName,
+        eventSlug: candidate.eventSlug,
+        marketSlug: candidate.marketSlug,
+        label: candidate.label,
+        side,
+        playerName,
+        openingPrice,
+        status: "watching",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      trackedKeys.add(key);
+      slotsAvailable -= 1;
+    }
   }
 }
 
-/** Entry point for the cron route: poll all open matches, then look for new ones to track. */
+/** Entry point for the cron route: poll all open positions, then discover new ones. */
 export async function runPollCycle() {
   const openMatches = await db
     .select()

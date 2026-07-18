@@ -1,30 +1,47 @@
-import { sqliteTable, text, real, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, real, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-export const trackedMatches = sqliteTable("tracked_matches", {
-  id: text("id").primaryKey(),
-  eventSlug: text("event_slug").notNull(),
-  marketSlug: text("market_slug").notNull(),
-  label: text("label").notNull(),
-  openingPrice: real("opening_price").notNull(),
-  favoriteSide: text("favorite_side", { enum: ["long", "short"] }).notNull(),
-  favoriteName: text("favorite_name").notNull(),
-  status: text("status", {
-    enum: ["watching", "entered", "exited", "resolved", "abandoned"],
-  })
-    .notNull()
-    .default("watching"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+/**
+ * A tracking unit is one (match × strategy) pair — the same match can be
+ * tracked simultaneously by favorite_dip (on the favorite side) and by
+ * underdog_momentum (on the underdog side), which are opposite positions.
+ */
+export const trackedMatches = sqliteTable(
+  "tracked_matches",
+  {
+    id: text("id").primaryKey(),
+    strategy: text("strategy", {
+      enum: ["favorite_dip", "underdog_momentum"],
+    }).notNull(),
+    eventSlug: text("event_slug").notNull(),
+    marketSlug: text("market_slug").notNull(),
+    label: text("label").notNull(),
+    // Which market side this unit trades, and that side's first-observed price.
+    side: text("side", { enum: ["long", "short"] }).notNull(),
+    playerName: text("player_name").notNull(),
+    openingPrice: real("opening_price").notNull(),
+    status: text("status", {
+      enum: ["watching", "entered", "exited", "resolved", "abandoned"],
+    })
+      .notNull()
+      .default("watching"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("tracked_market_strategy_idx").on(t.marketSlug, t.strategy)]
+);
 
 export const trades = sqliteTable("trades", {
   id: text("id").primaryKey(),
   matchId: text("match_id")
     .notNull()
     .references(() => trackedMatches.id),
+  strategy: text("strategy", {
+    enum: ["favorite_dip", "underdog_momentum"],
+  }).notNull(),
   eventSlug: text("event_slug").notNull(),
   marketSlug: text("market_slug").notNull(),
   label: text("label").notNull(),
+  playerName: text("player_name").notNull(),
   entryPrice: real("entry_price").notNull(),
   entryAt: integer("entry_at").notNull(),
   exitPrice: real("exit_price"),

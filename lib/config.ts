@@ -1,28 +1,83 @@
 /**
  * Tunable strategy constants for the tennis swing bot (v1, paper trading only).
- * Adjust these after reviewing simulated results — core logic should not need to change.
+ *
+ * Two strategies run in parallel, every trade tagged with which one made it so
+ * the dashboard can compare them:
+ *
+ *  - favorite_dip:       buy the pre-match favorite after a price DIP
+ *                        (mean-reversion — bet the favorite recovers).
+ *  - underdog_momentum:  buy a cheap pre-match underdog that is RISING off its
+ *                        opening (longshot + momentum), and take profit early.
+ *
+ * "Wide open, log everything" mode: entries cast a wide net and exits are
+ * RELATIVE (% move from entry) rather than fixed price zones, because a fixed
+ * target like "sell at 0.50" is meaningless once you enter anywhere from 0.10
+ * to 0.55. Relative exits scale across the whole range and match the
+ * "lock in profit once it's worth it" mindset.
+ *
+ * Adjust freely after reviewing results — the engine reads everything from here.
  */
+
+export type StrategyName = "favorite_dip" | "underdog_momentum";
+
+export interface StrategyConfig {
+  enabled: boolean;
+  /** Which side of the match this strategy trades, by its opening price. */
+  track: "favorite" | "underdog";
+  /** A side only counts as favorite/underdog if its opening price clears this. */
+  openingThreshold: number;
+  /** Buy only if the tracked side's current price falls in this (wide) band. */
+  entryMin: number;
+  entryMax: number;
+  /**
+   * Directional confirmation vs. the opening price:
+   *  - "dip":       enter only if current < opening (favorite has fallen)
+   *  - "rise":      enter only if current > opening (underdog has climbed)
+   *  - "none":      no directional filter
+   */
+  entryDirection: "dip" | "rise" | "none";
+  /** Take profit once price is up this fraction from entry (0.35 = +35%). */
+  takeProfitPct: number;
+  /** Stop loss once price is down this fraction from entry (0.30 = -30%). */
+  stopLossPct: number;
+}
+
 export const STRATEGY_CONFIG = {
-  // Entry: buy the pre-match favorite when its price drops into this zone
-  // (proxy signal for "favorite lost set 1").
-  ENTRY_ZONE: { min: 0.28, max: 0.35 },
-
-  // Exit - take profit: sell when price recovers into this zone.
-  TAKE_PROFIT_ZONE: { min: 0.48, max: 0.52 },
-
-  // Exit - stop loss: sell if price falls into this zone.
-  STOP_LOSS_ZONE: { min: 0.15, max: 0.18 },
-
-  // Only consider a market a candidate favorite-to-track if its opening
-  // (first-observed) price is above this threshold.
-  FAVORITE_MIN_OPENING_PRICE: 0.5,
-
   // Flat stake per simulated trade (USD).
   STAKE_USD: 2,
 
-  // Max number of matches tracked concurrently.
-  MAX_CONCURRENT_MATCHES: 4,
+  // Max number of (match × strategy) positions tracked at once. Raised well
+  // above the original 3–4 because this is paper trading — no capital limit,
+  // and more concurrent tracking means more learning data per day.
+  MAX_CONCURRENT: 20,
 
-  // How often the cron job polls (informational; actual schedule lives in vercel.json).
+  // How often the poll runs (informational; real schedule is the GitHub Action).
   POLL_INTERVAL_MINUTES: 5,
+
+  strategies: {
+    favorite_dip: {
+      enabled: true,
+      track: "favorite",
+      openingThreshold: 0.55,
+      entryMin: 0.12,
+      entryMax: 0.45,
+      entryDirection: "dip",
+      takeProfitPct: 0.35,
+      stopLossPct: 0.3,
+    },
+    underdog_momentum: {
+      enabled: true,
+      track: "underdog",
+      openingThreshold: 0.55, // favorite side must clear this, so underdog <= 0.45
+      entryMin: 0.1,
+      entryMax: 0.55,
+      entryDirection: "rise",
+      takeProfitPct: 0.35,
+      stopLossPct: 0.3,
+    },
+  } satisfies Record<StrategyName, StrategyConfig>,
 } as const;
+
+export const STRATEGY_NAMES = Object.keys(
+  STRATEGY_CONFIG.strategies
+) as StrategyName[];

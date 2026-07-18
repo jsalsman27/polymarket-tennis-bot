@@ -83,8 +83,6 @@ export interface LiveTennisMatch {
   shortName: string;
 }
 
-export type FavoriteSide = "long" | "short";
-
 export interface PriceReading {
   /** Live price of the market's "long" side (i.e. the raw currentPx), or null if unavailable. */
   longPrice: number | null;
@@ -163,9 +161,4 @@ export async function getSettlement(marketSlug: string): Promise<number | null> 
   } catch {
     return null;
   }
-}
-
-/** Convert a long-side price into the tracked favorite's price. */
-export function favoritePrice(longPrice: number, favoriteSide: FavoriteSide): number {
-  return favoriteSide === "long" ? longPrice : 1 - longPrice;
 }

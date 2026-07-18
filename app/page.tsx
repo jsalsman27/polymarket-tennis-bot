@@ -1,15 +1,16 @@
-import { getDashboardData } from "@/lib/stats";
+import { getDashboardData, type Stats } from "@/lib/stats";
+import { STRATEGY_NAMES } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
 function fmtUsd(n: number | null): string {
-  if (n === null) return "—";
+  if (n === null || n === undefined) return "—";
   const sign = n < 0 ? "-" : "";
   return `${sign}$${Math.abs(n).toFixed(2)}`;
 }
 
 function fmtPct(n: number | null): string {
-  if (n === null) return "—";
+  if (n === null || n === undefined) return "—";
   return `${(n * 100).toFixed(0)}%`;
 }
 
@@ -23,10 +24,15 @@ function fmtTime(ts: number | null): string {
   });
 }
 
-function pnlClass(n: number | null): string {
-  if (n === null) return "text-zinc-500";
+function pnlClass(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "text-zinc-500";
   return n >= 0 ? "text-emerald-600" : "text-red-600";
 }
+
+const STRATEGY_LABEL: Record<string, string> = {
+  favorite_dip: "Favorite dip",
+  underdog_momentum: "Underdog momentum",
+};
 
 const EXIT_REASON_LABEL: Record<string, string> = {
   take_profit: "Take profit",
@@ -50,120 +56,143 @@ export default async function Home() {
           </p>
         </header>
 
-        <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-5">
-          <StatCard label="Cumulative P/L" value={fmtUsd(data.cumulativePnl)} valueClass={pnlClass(data.cumulativePnl)} />
-          <StatCard label="Trades" value={String(data.totalTrades)} />
-          <StatCard label="Win rate" value={fmtPct(data.winRate)} />
-          <StatCard label="Avg win" value={fmtUsd(data.avgWin)} valueClass="text-emerald-600" />
-          <StatCard label="Avg loss" value={fmtUsd(data.avgLoss)} valueClass="text-red-600" />
+        <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard label="Cumulative P/L" value={fmtUsd(data.overall.cumulativePnl)} valueClass={pnlClass(data.overall.cumulativePnl)} />
+          <StatCard label="Trades" value={String(data.overall.totalTrades)} />
+          <StatCard label="Win rate" value={fmtPct(data.overall.winRate)} />
+          <StatCard label="Expectancy / trade" value={fmtUsd(data.overall.expectancy)} valueClass={pnlClass(data.overall.expectancy)} />
         </section>
-
-        {data.openTrades.length > 0 && (
-          <section className="mb-10">
-            <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              Open positions
-            </h2>
-            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-2 font-medium">Match</th>
-                    <th className="px-4 py-2 font-medium">Entry price</th>
-                    <th className="px-4 py-2 font-medium">Entered</th>
-                    <th className="px-4 py-2 font-medium">Stake</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.openTrades.map((t) => (
-                    <tr key={t.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                      <td className="px-4 py-2">{t.label}</td>
-                      <td className="px-4 py-2">{t.entryPrice.toFixed(2)}</td>
-                      <td className="px-4 py-2">{fmtTime(t.entryAt)}</td>
-                      <td className="px-4 py-2">{fmtUsd(t.stake)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
 
         <section className="mb-10">
           <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            Per-trial (daily) P/L
+            Strategy comparison
           </h2>
-          {data.dayPnl.length === 0 ? (
-            <p className="text-sm text-zinc-500">No closed trades yet.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-2 font-medium">Date</th>
-                    <th className="px-4 py-2 font-medium">Trades</th>
-                    <th className="px-4 py-2 font-medium">Day P/L</th>
-                    <th className="px-4 py-2 font-medium">Cumulative P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...data.dayPnl].reverse().map((d) => (
-                    <tr key={d.date} className="border-t border-zinc-200 dark:border-zinc-800">
-                      <td className="px-4 py-2">{d.date}</td>
-                      <td className="px-4 py-2">{d.tradeCount}</td>
-                      <td className={`px-4 py-2 font-medium ${pnlClass(d.pnl)}`}>{fmtUsd(d.pnl)}</td>
-                      <td className={`px-4 py-2 font-medium ${pnlClass(d.cumulativePnl)}`}>
-                        {fmtUsd(d.cumulativePnl)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {STRATEGY_NAMES.map((name) => (
+              <StrategyCard
+                key={name}
+                title={STRATEGY_LABEL[name] ?? name}
+                stats={data.perStrategy[name]}
+              />
+            ))}
+          </div>
         </section>
 
-        <section>
-          <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            Trade log
-          </h2>
-          {data.closedTrades.length === 0 ? (
-            <p className="text-sm text-zinc-500">No closed trades yet.</p>
+        {data.openTrades.length > 0 && (
+          <Section title="Open positions">
+            <Table
+              head={["Match", "Strategy", "Side", "Entry", "Entered", "Stake"]}
+              rows={data.openTrades.map((t) => [
+                t.label,
+                STRATEGY_LABEL[t.strategy] ?? t.strategy,
+                t.playerName,
+                t.entryPrice.toFixed(2),
+                fmtTime(t.entryAt),
+                fmtUsd(t.stake),
+              ])}
+            />
+          </Section>
+        )}
+
+        <Section title="Which entry prices pay (by bucket)">
+          {data.entryBuckets.length === 0 ? (
+            <Empty />
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-2 font-medium">Match</th>
-                    <th className="px-4 py-2 font-medium">Entry</th>
-                    <th className="px-4 py-2 font-medium">Exit</th>
-                    <th className="px-4 py-2 font-medium">Reason</th>
-                    <th className="px-4 py-2 font-medium">P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.closedTrades.map((t) => (
-                    <tr key={t.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                      <td className="px-4 py-2">{t.label}</td>
-                      <td className="px-4 py-2">
-                        {t.entryPrice.toFixed(2)}
-                        <span className="ml-1 text-xs text-zinc-500">{fmtTime(t.entryAt)}</span>
-                      </td>
-                      <td className="px-4 py-2">
-                        {t.exitPrice !== null ? t.exitPrice.toFixed(2) : "—"}
-                        <span className="ml-1 text-xs text-zinc-500">{fmtTime(t.exitAt)}</span>
-                      </td>
-                      <td className="px-4 py-2">
-                        {t.exitReason ? EXIT_REASON_LABEL[t.exitReason] ?? t.exitReason : "—"}
-                      </td>
-                      <td className={`px-4 py-2 font-medium ${pnlClass(t.pnl)}`}>{fmtUsd(t.pnl)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table
+              head={["Entry price", "Trades", "Win rate", "Total P/L", "Expectancy"]}
+              rows={data.entryBuckets.map((b) => [
+                b.label,
+                String(b.tradeCount),
+                fmtPct(b.winRate),
+                { text: fmtUsd(b.pnl), className: pnlClass(b.pnl) },
+                { text: fmtUsd(b.expectancy), className: pnlClass(b.expectancy) },
+              ])}
+            />
           )}
-        </section>
+        </Section>
+
+        <Section title="Per-trial (daily) P/L">
+          {data.dayPnl.length === 0 ? (
+            <Empty />
+          ) : (
+            <Table
+              head={["Date", "Trades", "Day P/L", "Cumulative P/L"]}
+              rows={[...data.dayPnl].reverse().map((d) => [
+                d.date,
+                String(d.tradeCount),
+                { text: fmtUsd(d.pnl), className: pnlClass(d.pnl) },
+                { text: fmtUsd(d.cumulativePnl), className: pnlClass(d.cumulativePnl) },
+              ])}
+            />
+          )}
+        </Section>
+
+        <Section title="Trade log">
+          {data.closedTrades.length === 0 ? (
+            <Empty />
+          ) : (
+            <Table
+              head={["Match", "Strategy", "Entry", "Exit", "Reason", "P/L"]}
+              rows={data.closedTrades.map((t) => [
+                t.label,
+                STRATEGY_LABEL[t.strategy] ?? t.strategy,
+                t.entryPrice.toFixed(2),
+                t.exitPrice !== null ? t.exitPrice.toFixed(2) : "—",
+                t.exitReason ? EXIT_REASON_LABEL[t.exitReason] ?? t.exitReason : "—",
+                { text: fmtUsd(t.pnl), className: pnlClass(t.pnl) },
+              ])}
+            />
+          )}
+        </Section>
       </main>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-10">
+      <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Empty() {
+  return <p className="text-sm text-zinc-500">No closed trades yet.</p>;
+}
+
+type Cell = string | { text: string; className?: string };
+
+function Table({ head, rows }: { head: string[]; rows: Cell[][] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full text-sm">
+        <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+          <tr>
+            {head.map((h) => (
+              <th key={h} className="px-4 py-2 font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-t border-zinc-200 dark:border-zinc-800">
+              {row.map((cell, j) => {
+                const text = typeof cell === "string" ? cell : cell.text;
+                const cn = typeof cell === "string" ? "" : cell.className ?? "";
+                return (
+                  <td key={j} className={`px-4 py-2 ${cn ? `font-medium ${cn}` : ""}`}>
+                    {text}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -181,6 +210,44 @@ function StatCard({
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${valueClass ?? "text-zinc-900 dark:text-zinc-50"}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StrategyCard({ title, stats }: { title: string; stats: Stats }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">{title}</h3>
+        <span className={`text-lg font-semibold ${pnlClass(stats.cumulativePnl)}`}>
+          {fmtUsd(stats.cumulativePnl)}
+        </span>
+      </div>
+      <dl className="grid grid-cols-4 gap-2 text-center text-xs">
+        <Metric label="Trades" value={String(stats.totalTrades)} />
+        <Metric label="Win %" value={fmtPct(stats.winRate)} />
+        <Metric label="Exp/trade" value={fmtUsd(stats.expectancy)} valueClass={pnlClass(stats.expectancy)} />
+        <Metric label="Avg win" value={fmtUsd(stats.avgWin)} valueClass="text-emerald-600" />
+      </dl>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div>
+      <div className="text-zinc-500">{label}</div>
+      <div className={`mt-0.5 font-semibold ${valueClass ?? "text-zinc-900 dark:text-zinc-50"}`}>
         {value}
       </div>
     </div>
