@@ -1,10 +1,49 @@
-import { STRATEGY_CONFIG, type StrategyConfig, type StrategyName } from "./config";
+import { STRATEGY_CONFIG, FRICTION, type StrategyConfig, type StrategyName } from "./config";
 
 export type Side = "long" | "short";
 
 /** Price of a given market side, from the market's raw long-side price. */
 export function sidePrice(longPrice: number, side: Side): number {
   return side === "long" ? longPrice : 1 - longPrice;
+}
+
+/**
+ * Executable BUY price for a side, given the long side's bid/ask.
+ * Buying long pays the long ask; buying short pays (1 - long bid).
+ * Falls back to the mid price if the book side is missing (thin market).
+ */
+export function buyFill(
+  side: Side,
+  mid: number,
+  longBid: number | null,
+  longAsk: number | null
+): number {
+  if (!FRICTION.applySpread) return mid;
+  if (side === "long") return longAsk ?? mid;
+  return longBid !== null ? 1 - longBid : mid;
+}
+
+/**
+ * Executable SELL price for a side. Selling long receives the long bid;
+ * selling short receives (1 - long ask). Falls back to mid if missing.
+ */
+export function sellFill(
+  side: Side,
+  mid: number,
+  longBid: number | null,
+  longAsk: number | null
+): number {
+  if (!FRICTION.applySpread) return mid;
+  if (side === "long") return longBid ?? mid;
+  return longAsk !== null ? 1 - longAsk : mid;
+}
+
+/** Polymarket taker fee for a fill: Fee = coeff × contracts × p × (1 - p). */
+export function takerFee(shares: number, fillPrice: number): number {
+  if (!FRICTION.applyFees) return 0;
+  const p = Math.min(Math.max(fillPrice, 0), 1);
+  const fee = FRICTION.takerFeeCoeff * shares * p * (1 - p);
+  return Math.round(fee * 100) / 100; // round to the cent
 }
 
 /**
@@ -34,8 +73,11 @@ export type EntryDecision = { action: "enter" } | { action: "wait" };
 export function decideEntry(
   cfg: StrategyConfig,
   currentPrice: number,
-  openingPrice: number
+  openingPrice: number,
+  completedSets: number
 ): EntryDecision {
+  // Real-signal gate: a set must actually have completed.
+  if (completedSets < cfg.minCompletedSets) return { action: "wait" };
   if (currentPrice < cfg.entryMin || currentPrice > cfg.entryMax) {
     return { action: "wait" };
   }

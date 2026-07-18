@@ -5,8 +5,10 @@ import { STRATEGY_CONFIG, STRATEGY_NAMES, type StrategyName } from "./config";
 import {
   discoverLiveTennisMatches,
   getPriceReading,
+  getMatchState,
   isMarketClosed,
   getSettlement,
+  type PriceReading,
 } from "./polymarket";
 import {
   sidePrice,
@@ -14,6 +16,9 @@ import {
   decideEntry,
   decideExit,
   computePnl,
+  buyFill,
+  sellFill,
+  takerFee,
   getStrategyConfig,
   type Side,
 } from "./strategy";
@@ -34,6 +39,11 @@ async function openTradeFor(matchId: string) {
     .get();
 }
 
+/** Mid price of the tracked side, for signal decisions and snapshots. */
+function midFor(reading: PriceReading, side: Side): number | null {
+  return reading.longPrice !== null ? sidePrice(reading.longPrice, side) : null;
+}
+
 async function closeAsResolved(match: TrackedMatch, now: number) {
   const settlement = await getSettlement(match.marketSlug);
   const longSettlement = settlement ?? 0.5; // push fallback if unavailable
@@ -42,7 +52,9 @@ async function closeAsResolved(match: TrackedMatch, now: number) {
   if (match.status === "entered") {
     const openTrade = await openTradeFor(match.id);
     if (openTrade) {
-      const pnl = computePnl(openTrade.entryPrice, finalPrice, openTrade.stake);
+      // No exit fee/spread on hold-to-resolution: settlement isn't a taker trade.
+      const gross = computePnl(openTrade.entryPrice, finalPrice, openTrade.stake);
+      const pnl = gross - openTrade.fees;
       await db
         .update(trades)
         .set({
@@ -63,13 +75,13 @@ async function closeAsResolved(match: TrackedMatch, now: number) {
 
 async function pollTrackedMatch(match: TrackedMatch) {
   const now = Date.now();
+  const side = match.side as Side;
   const cfg = getStrategyConfig(match.strategy as StrategyName);
   const reading = await getPriceReading(match.marketSlug);
-  const price =
-    reading.longPrice !== null ? sidePrice(reading.longPrice, match.side as Side) : null;
+  const mid = midFor(reading, side);
 
-  if (price !== null) {
-    await db.insert(priceSnapshots).values({ matchId: match.id, price, observedAt: now });
+  if (mid !== null) {
+    await db.insert(priceSnapshots).values({ matchId: match.id, price: mid, observedAt: now });
   }
 
   if (reading.looksResolved) {
@@ -79,41 +91,56 @@ async function pollTrackedMatch(match: TrackedMatch) {
     return;
   }
 
-  if (price === null) return;
+  if (mid === null) return;
 
   if (match.status === "watching") {
-    if (decideEntry(cfg, price, match.openingPrice).action === "enter") {
-      await db.insert(trades).values({
-        id: crypto.randomUUID(),
-        matchId: match.id,
-        strategy: match.strategy,
-        eventSlug: match.eventSlug,
-        marketSlug: match.marketSlug,
-        label: match.label,
-        playerName: match.playerName,
-        entryPrice: price,
-        entryAt: now,
-        stake: STRATEGY_CONFIG.STAKE_USD,
-        tradeDate: dateKey(now),
-      });
-      await db
-        .update(trackedMatches)
-        .set({ status: "entered", updatedAt: now })
-        .where(eq(trackedMatches.id, match.id));
+    const state = await getMatchState(match.eventSlug);
+    if (decideEntry(cfg, mid, match.openingPrice, state.completedSets).action !== "enter") {
+      return;
     }
+    // Fill the buy at the ask (spread cost) and pay the entry taker fee.
+    const entryFill = buyFill(side, mid, reading.longBid, reading.longAsk);
+    const shares = STRATEGY_CONFIG.STAKE_USD / entryFill;
+    const entryFee = takerFee(shares, entryFill);
+
+    await db.insert(trades).values({
+      id: crypto.randomUUID(),
+      matchId: match.id,
+      strategy: match.strategy,
+      eventSlug: match.eventSlug,
+      marketSlug: match.marketSlug,
+      label: match.label,
+      playerName: match.playerName,
+      entryPrice: entryFill,
+      entryAt: now,
+      stake: STRATEGY_CONFIG.STAKE_USD,
+      fees: entryFee,
+      tradeDate: dateKey(now),
+    });
+    await db
+      .update(trackedMatches)
+      .set({ status: "entered", updatedAt: now })
+      .where(eq(trackedMatches.id, match.id));
     return;
   }
 
   if (match.status === "entered") {
     const openTrade = await openTradeFor(match.id);
     if (!openTrade) return;
-    const decision = decideExit(cfg, price, openTrade.entryPrice);
+    // Decisions use the mid price; the fill then pays the spread.
+    const decision = decideExit(cfg, mid, openTrade.entryPrice);
     if (decision.action === "hold") return;
 
-    const pnl = computePnl(openTrade.entryPrice, price, openTrade.stake);
+    const exitFill = sellFill(side, mid, reading.longBid, reading.longAsk);
+    const shares = openTrade.stake / openTrade.entryPrice;
+    const exitFee = takerFee(shares, exitFill);
+    const totalFees = openTrade.fees + exitFee;
+    const gross = computePnl(openTrade.entryPrice, exitFill, openTrade.stake);
+    const pnl = gross - totalFees;
+
     await db
       .update(trades)
-      .set({ exitPrice: price, exitAt: now, exitReason: decision.action, pnl })
+      .set({ exitPrice: exitFill, exitAt: now, exitReason: decision.action, fees: totalFees, pnl })
       .where(eq(trades.id, openTrade.id));
     await db
       .update(trackedMatches)
@@ -132,7 +159,6 @@ async function discoverAndTrack() {
   let slotsAvailable = STRATEGY_CONFIG.MAX_CONCURRENT - openMatches.length;
   if (slotsAvailable <= 0) return;
 
-  // Existing tracking units keyed by "marketSlug::strategy" to avoid duplicates.
   const trackedKeys = new Set(openMatches.map((m) => `${m.marketSlug}::${m.strategy}`));
 
   const candidates = await discoverLiveTennisMatches();

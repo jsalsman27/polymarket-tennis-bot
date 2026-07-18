@@ -86,8 +86,20 @@ export interface LiveTennisMatch {
 export interface PriceReading {
   /** Live price of the market's "long" side (i.e. the raw currentPx), or null if unavailable. */
   longPrice: number | null;
+  /** Best bid for the long side (what you'd receive selling long). */
+  longBid: number | null;
+  /** Best ask for the long side (what you'd pay buying long). */
+  longAsk: number | null;
   /** True once the order book has emptied out, which happens on/after resolution. */
   looksResolved: boolean;
+}
+
+export interface MatchState {
+  period: string | null;
+  /** Number of fully completed sets, derived from `period` (S2 => 1, FT => finished). */
+  completedSets: number;
+  closed: boolean;
+  live: boolean;
 }
 
 function toNumber(amount: Amount | null | undefined): number | null {
@@ -143,7 +155,37 @@ export async function getPriceReading(marketSlug: string): Promise<PriceReading>
   const md = res.marketData;
   return {
     longPrice: toNumber(md?.currentPx),
+    longBid: toNumber(md?.bestBid),
+    longAsk: toNumber(md?.bestAsk),
     looksResolved: !md?.bestBid && !md?.bestAsk,
+  };
+}
+
+/** Parse Polymarket's tennis `period` field into a count of completed sets. */
+function completedSetsFromPeriod(period: string | null | undefined, score?: string | null): number {
+  if (!period) return 0;
+  const p = period.toUpperCase();
+  if (p === "NS") return 0; // not started
+  if (p === "FT") {
+    // Finished — count completed sets from the score string ("6-2, 6-3" => 2).
+    return score ? score.split(",").filter((s) => s.trim().length > 0).length : 0;
+  }
+  const m = p.match(/^S(\d+)$/); // S1 => set 1 in progress => 0 completed
+  if (m) return Math.max(0, parseInt(m[1], 10) - 1);
+  return 0;
+}
+
+/** Live match state (set progress) for entry gating. Fetches the event by slug. */
+export async function getMatchState(eventSlug: string): Promise<MatchState> {
+  const res = await client.get<{ event: RawEvent & { score?: string } }>(
+    `/v1/events/slug/${eventSlug}`
+  );
+  const e = res.event;
+  return {
+    period: e?.period ?? null,
+    completedSets: completedSetsFromPeriod(e?.period, e?.score),
+    closed: Boolean(e?.closed),
+    live: Boolean(e?.live),
   };
 }
 

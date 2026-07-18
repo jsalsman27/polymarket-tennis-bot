@@ -7,7 +7,10 @@ type Trade = typeof trades.$inferSelect;
 
 export interface Stats {
   totalTrades: number;
+  /** Net cumulative P/L (after spread + fees). */
   cumulativePnl: number;
+  /** Total taker fees paid across all closed trades. */
+  totalFees: number;
   winRate: number | null;
   avgWin: number | null;
   avgLoss: number | null;
@@ -43,9 +46,11 @@ function computeStats(closed: Trade[]): Stats {
   const wins = closed.filter((t) => (t.pnl ?? 0) > 0);
   const losses = closed.filter((t) => (t.pnl ?? 0) <= 0);
   const cumulativePnl = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const totalFees = closed.reduce((s, t) => s + (t.fees ?? 0), 0);
   return {
     totalTrades: closed.length,
     cumulativePnl,
+    totalFees,
     winRate: closed.length > 0 ? wins.length / closed.length : null,
     avgWin: wins.length > 0 ? wins.reduce((s, t) => s + (t.pnl ?? 0), 0) / wins.length : null,
     avgLoss: losses.length > 0 ? losses.reduce((s, t) => s + (t.pnl ?? 0), 0) / losses.length : null,

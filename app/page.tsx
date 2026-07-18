@@ -56,12 +56,16 @@ export default async function Home() {
           </p>
         </header>
 
-        <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard label="Cumulative P/L" value={fmtUsd(data.overall.cumulativePnl)} valueClass={pnlClass(data.overall.cumulativePnl)} />
+        <section className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
+          <StatCard label="Net P/L" value={fmtUsd(data.overall.cumulativePnl)} valueClass={pnlClass(data.overall.cumulativePnl)} />
           <StatCard label="Trades" value={String(data.overall.totalTrades)} />
           <StatCard label="Win rate" value={fmtPct(data.overall.winRate)} />
           <StatCard label="Expectancy / trade" value={fmtUsd(data.overall.expectancy)} valueClass={pnlClass(data.overall.expectancy)} />
+          <StatCard label="Fees paid" value={fmtUsd(data.overall.totalFees)} valueClass="text-zinc-500" />
         </section>
+        <p className="mb-10 text-xs text-zinc-500">
+          P/L is net — fills pay the live bid/ask spread and Polymarket&apos;s taker fee. Hold-to-resolution exits incur no fee.
+        </p>
 
         <section className="mb-10">
           <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">

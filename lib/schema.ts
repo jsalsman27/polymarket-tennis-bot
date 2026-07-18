@@ -50,6 +50,9 @@ export const trades = sqliteTable("trades", {
     enum: ["take_profit", "stop_loss", "resolution_win", "resolution_loss"],
   }),
   stake: real("stake").notNull(),
+  /** Total taker fees paid across entry + exit legs (USD). */
+  fees: real("fees").notNull().default(0),
+  /** Net P/L, after spread (fills at bid/ask) and fees. */
   pnl: real("pnl"),
   tradeDate: text("trade_date").notNull(),
 });

@@ -40,7 +40,33 @@ export interface StrategyConfig {
   takeProfitPct: number;
   /** Stop loss once price is down this fraction from entry (0.30 = -30%). */
   stopLossPct: number;
+  /**
+   * Require at least this many COMPLETED sets before entering — the real
+   * signal. favorite_dip wants set 1 finished (favorite behind); underdog
+   * momentum wants the underdog to have actually won a set. Gating on real
+   * set state (not just price) filters mid-set noise and avoids buying into a
+   * set-1 injury collapse.
+   */
+  minCompletedSets: number;
 }
+
+/**
+ * Real-world friction so paper P/L isn't rosy. Both are modeled from live data:
+ *  - spread: buy at the ask, sell at the bid (from the bbo endpoint)
+ *  - fees:   Polymarket's exact taker formula, Fee = coeff × shares × p × (1-p)
+ *
+ * No fee/spread is applied to hold-to-resolution exits, because settlement is
+ * not a taker trade on Polymarket.
+ *
+ * Taker (not maker) is assumed on both legs as the conservative case; resting
+ * limit orders could instead earn the maker rebate, but assuming taker keeps
+ * the simulation honest rather than optimistic.
+ */
+export const FRICTION = {
+  applySpread: true,
+  applyFees: true,
+  takerFeeCoeff: 0.06,
+} as const;
 
 export const STRATEGY_CONFIG = {
   // Flat stake per simulated trade (USD).
@@ -64,6 +90,7 @@ export const STRATEGY_CONFIG = {
       entryDirection: "dip",
       takeProfitPct: 0.35,
       stopLossPct: 0.3,
+      minCompletedSets: 1,
     },
     underdog_momentum: {
       enabled: true,
@@ -74,6 +101,7 @@ export const STRATEGY_CONFIG = {
       entryDirection: "rise",
       takeProfitPct: 0.35,
       stopLossPct: 0.3,
+      minCompletedSets: 1,
     },
   } satisfies Record<StrategyName, StrategyConfig>,
 } as const;
