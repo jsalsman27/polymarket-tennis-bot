@@ -63,13 +63,22 @@ when they're unset.
 
 ### 2. Cron frequency and the Vercel Hobby plan
 
-`vercel.json` schedules polling every 5 minutes. **Vercel's free Hobby plan
-currently limits cron jobs to one run per day**, which is too infrequent for
-in-play tennis. Options:
-- Upgrade to a Vercel Pro plan (supports minute-level cron), or
-- Keep the app on Hobby and trigger `/api/cron/poll` from an external
-  scheduler (e.g. a GitHub Actions workflow on a cron schedule, or a free
-  service like cron-job.org) hitting your deployed URL every few minutes.
+**Vercel's free Hobby plan limits cron jobs to one run per day**, which is too
+infrequent for in-play tennis — and it rejects deploys that declare a more
+frequent schedule. So `vercel.json` is set to a daily run (`0 12 * * *`) purely
+to keep Hobby deploys valid; real polling is driven by an external scheduler.
+
+To poll every few minutes on the free plan, hit the deployed poll endpoint from
+an external scheduler:
+
+```
+GET https://<your-app>.vercel.app/api/cron/poll
+Authorization: Bearer <CRON_SECRET>
+```
+
+Options: a free service like [cron-job.org](https://cron-job.org), or a GitHub
+Actions workflow on a `schedule:` trigger. (Upgrading to Vercel Pro would allow
+minute-level `vercel.json` cron and remove the need for this.)
 
 ### 3. Optional: protect the poll endpoint
 
