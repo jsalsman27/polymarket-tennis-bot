@@ -7,8 +7,13 @@ export const maxDuration = 60;
 export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret) {
+    // Accept the secret either as an Authorization header (Vercel Cron sends
+    // this) OR as a ?secret= query param (simpler for external schedulers like
+    // cron-job.org — no custom header needed).
     const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${cronSecret}`) {
+    const querySecret = request.nextUrl.searchParams.get("secret");
+    const ok = auth === `Bearer ${cronSecret}` || querySecret === cronSecret;
+    if (!ok) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
