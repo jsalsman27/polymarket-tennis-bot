@@ -63,9 +63,11 @@ export const STRATEGY_CONFIG = {
   // Flat stake per simulated trade (USD).
   STAKE_USD: 2,
 
-  // Max (match × strategy) positions tracked at once. High because it's paper —
-  // no capital limit, and more concurrency means more learning data.
-  MAX_CONCURRENT: 30,
+  // Max (match × strategy) positions tracked at once. Divided by the 3
+  // strategies, this is ~20 distinct matches. Kept within Polymarket's
+  // 60-requests/minute limit thanks to per-cycle price/state caching (each
+  // match is fetched once per poll and shared across its strategy units).
+  MAX_CONCURRENT: 60,
 
   // How far ahead to look for not-yet-started matches (for pre-match entries).
   UPCOMING_WINDOW_HOURS: 3,

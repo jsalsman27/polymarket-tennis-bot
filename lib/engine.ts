@@ -9,6 +9,7 @@ import {
   isMarketClosed,
   getSettlement,
   type PriceReading,
+  type MatchState,
 } from "./polymarket";
 import {
   sidePrice,
@@ -26,6 +27,35 @@ import {
 const OPEN_STATUSES = ["watching", "entered"] as const;
 
 type TrackedMatch = typeof trackedMatches.$inferSelect;
+
+/**
+ * Per-poll-cycle cache. The same match is often tracked by several strategies
+ * at once; without this each strategy unit would re-fetch the same price/state,
+ * multiplying Polymarket API calls (and risking the 60-req/min limit). Fetch
+ * each market's price and each event's state once per cycle, share the result.
+ */
+class PollCache {
+  private price = new Map<string, Promise<PriceReading>>();
+  private state = new Map<string, Promise<MatchState>>();
+
+  price_(marketSlug: string): Promise<PriceReading> {
+    let p = this.price.get(marketSlug);
+    if (!p) {
+      p = getPriceReading(marketSlug);
+      this.price.set(marketSlug, p);
+    }
+    return p;
+  }
+
+  state_(eventSlug: string): Promise<MatchState> {
+    let s = this.state.get(eventSlug);
+    if (!s) {
+      s = getMatchState(eventSlug);
+      this.state.set(eventSlug, s);
+    }
+    return s;
+  }
+}
 
 function dateKey(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
@@ -73,11 +103,11 @@ async function closeAsResolved(match: TrackedMatch, now: number) {
     .where(eq(trackedMatches.id, match.id));
 }
 
-async function pollTrackedMatch(match: TrackedMatch) {
+async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
   const now = Date.now();
   const side = match.side as Side;
   const cfg = getStrategyConfig(match.strategy as StrategyName);
-  const reading = await getPriceReading(match.marketSlug);
+  const reading = await cache.price_(match.marketSlug);
   const mid = midFor(reading, side);
 
   if (mid !== null) {
@@ -94,7 +124,7 @@ async function pollTrackedMatch(match: TrackedMatch) {
   if (mid === null) return;
 
   if (match.status === "watching") {
-    const state = await getMatchState(match.eventSlug);
+    const state = await cache.state_(match.eventSlug);
     if (decideEntry(cfg, mid, match.openingPrice, state.completedSets).action !== "enter") {
       return;
     }
@@ -157,7 +187,7 @@ async function pollTrackedMatch(match: TrackedMatch) {
   }
 }
 
-async function discoverAndTrack() {
+async function discoverAndTrack(cache: PollCache) {
   const now = Date.now();
   const openMatches = await db
     .select()
@@ -181,7 +211,7 @@ async function discoverAndTrack() {
   for (const candidate of candidates) {
     if (slotsAvailable <= 0) break;
 
-    const reading = await getPriceReading(candidate.marketSlug);
+    const reading = await cache.price_(candidate.marketSlug);
     if (reading.longPrice === null) continue;
 
     for (const strategyName of STRATEGY_NAMES) {
@@ -231,18 +261,19 @@ export async function runPollCycle() {
     .where(inArray(trackedMatches.status, [...OPEN_STATUSES]));
 
   const errors: string[] = [];
+  const cache = new PollCache();
 
   // Isolate each match: one bad API call / row shouldn't abort the whole cycle.
   for (const match of openMatches) {
     try {
-      await pollTrackedMatch(match);
+      await pollTrackedMatch(match, cache);
     } catch (err) {
       errors.push(`poll ${match.marketSlug} [${match.strategy}]: ${String(err)}`);
     }
   }
 
   try {
-    await discoverAndTrack();
+    await discoverAndTrack(cache);
   } catch (err) {
     errors.push(`discover: ${String(err)}`);
   }
