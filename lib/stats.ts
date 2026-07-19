@@ -1,7 +1,7 @@
 import { desc, isNotNull, isNull } from "drizzle-orm";
 import { db } from "./db";
 import { trades } from "./schema";
-import { STRATEGY_NAMES, type StrategyName } from "./config";
+import { STRATEGY_NAMES, TOURS, TOUR_NAMES, type StrategyName, type TourName } from "./config";
 
 type Trade = typeof trades.$inferSelect;
 
@@ -33,13 +33,23 @@ export interface EntryBucket {
   expectancy: number;
 }
 
-export interface DashboardData {
+/** One self-contained paper "book" for a tour (main or ITF). */
+export interface BookData {
+  tour: TourName;
+  label: string;
+  startingBankroll: number;
+  /** startingBankroll + net P/L. */
+  balance: number;
   overall: Stats;
   perStrategy: Record<StrategyName, Stats>;
   dayPnl: DayPnl[];
   entryBuckets: EntryBucket[];
   closedTrades: Trade[];
   openTrades: Trade[];
+}
+
+export interface DashboardData {
+  books: BookData[];
 }
 
 function computeStats(closed: Trade[]): Stats {
@@ -64,6 +74,58 @@ function bucketFor(entryPrice: number): string {
   return `${lo.toFixed(2)}–${hi.toFixed(2)}`;
 }
 
+function buildBook(tour: TourName, closed: Trade[], open: Trade[]): BookData {
+  const overall = computeStats(closed);
+
+  const byDate = new Map<string, { pnl: number; count: number }>();
+  for (const t of closed) {
+    const e = byDate.get(t.tradeDate) ?? { pnl: 0, count: 0 };
+    e.pnl += t.pnl ?? 0;
+    e.count += 1;
+    byDate.set(t.tradeDate, e);
+  }
+  let running = 0;
+  const dayPnl: DayPnl[] = [...byDate.keys()].sort().map((date) => {
+    const { pnl, count } = byDate.get(date)!;
+    running += pnl;
+    return { date, pnl, tradeCount: count, cumulativePnl: running };
+  });
+
+  const perStrategy = Object.fromEntries(
+    STRATEGY_NAMES.map((name) => [name, computeStats(closed.filter((t) => t.strategy === name))])
+  ) as Record<StrategyName, Stats>;
+
+  const byBucket = new Map<string, Trade[]>();
+  for (const t of closed) {
+    const b = bucketFor(t.entryPrice);
+    (byBucket.get(b) ?? byBucket.set(b, []).get(b)!).push(t);
+  }
+  const entryBuckets: EntryBucket[] = [...byBucket.keys()].sort().map((label) => {
+    const ts = byBucket.get(label)!;
+    const s = computeStats(ts);
+    return {
+      label,
+      tradeCount: ts.length,
+      pnl: s.cumulativePnl,
+      winRate: s.winRate ?? 0,
+      expectancy: s.expectancy ?? 0,
+    };
+  });
+
+  return {
+    tour,
+    label: TOURS[tour].label,
+    startingBankroll: TOURS[tour].startingBankroll,
+    balance: TOURS[tour].startingBankroll + overall.cumulativePnl,
+    overall,
+    perStrategy,
+    dayPnl,
+    entryBuckets,
+    closedTrades: closed,
+    openTrades: open,
+  };
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
   const closedTrades = await db
     .select()
@@ -77,57 +139,13 @@ export async function getDashboardData(): Promise<DashboardData> {
     .where(isNull(trades.exitAt))
     .orderBy(desc(trades.entryAt));
 
-  // Per-day P/L + running cumulative.
-  const byDate = new Map<string, { pnl: number; count: number }>();
-  for (const t of closedTrades) {
-    const e = byDate.get(t.tradeDate) ?? { pnl: 0, count: 0 };
-    e.pnl += t.pnl ?? 0;
-    e.count += 1;
-    byDate.set(t.tradeDate, e);
-  }
-  let running = 0;
-  const dayPnl: DayPnl[] = [...byDate.keys()]
-    .sort()
-    .map((date) => {
-      const { pnl, count } = byDate.get(date)!;
-      running += pnl;
-      return { date, pnl, tradeCount: count, cumulativePnl: running };
-    });
+  const books = TOUR_NAMES.map((tour) =>
+    buildBook(
+      tour,
+      closedTrades.filter((t) => t.tour === tour),
+      openTrades.filter((t) => t.tour === tour)
+    )
+  );
 
-  // Per-strategy stats.
-  const perStrategy = Object.fromEntries(
-    STRATEGY_NAMES.map((name) => [
-      name,
-      computeStats(closedTrades.filter((t) => t.strategy === name)),
-    ])
-  ) as Record<StrategyName, Stats>;
-
-  // Entry-price bucket stats (which price bands actually pay).
-  const byBucket = new Map<string, Trade[]>();
-  for (const t of closedTrades) {
-    const b = bucketFor(t.entryPrice);
-    (byBucket.get(b) ?? byBucket.set(b, []).get(b)!).push(t);
-  }
-  const entryBuckets: EntryBucket[] = [...byBucket.keys()]
-    .sort()
-    .map((label) => {
-      const ts = byBucket.get(label)!;
-      const s = computeStats(ts);
-      return {
-        label,
-        tradeCount: ts.length,
-        pnl: s.cumulativePnl,
-        winRate: s.winRate ?? 0,
-        expectancy: s.expectancy ?? 0,
-      };
-    });
-
-  return {
-    overall: computeStats(closedTrades),
-    perStrategy,
-    dayPnl,
-    entryBuckets,
-    closedTrades,
-    openTrades,
-  };
+  return { books };
 }

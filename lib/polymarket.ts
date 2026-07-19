@@ -16,10 +16,6 @@ import { STRATEGY_CONFIG } from "./config";
 
 const client = new PolymarketUS();
 
-// Tennis tours to watch. ITF tour tags (itfm/itfw) exist too but tend to have
-// thin liquidity; start with the two main tours and extend TENNIS_TAGS if needed.
-const TENNIS_TAGS = ["atp", "wta"] as const;
-
 const HOUR_MS = 60 * 60 * 1000;
 // How far back a start time can be and still count as a real live match (drops
 // the gateway's stale "live" flags left on long-finished matches).
@@ -118,13 +114,13 @@ function toNumber(amount: Amount | null | undefined): number | null {
  * strategy can enter ahead of time). Uses the start-time window to drop the
  * gateway's stale "live" flags on long-finished matches.
  */
-export async function discoverTrackableMatches(): Promise<LiveTennisMatch[]> {
+export async function discoverTrackableMatches(tags: string[]): Promise<LiveTennisMatch[]> {
   const matches: LiveTennisMatch[] = [];
   const now = Date.now();
   const startMin = new Date(now - LIVE_LOOKBACK_MS).toISOString();
   const startMax = new Date(now + UPCOMING_WINDOW_MS).toISOString();
 
-  for (const tag of TENNIS_TAGS) {
+  for (const tag of tags) {
     const res = await client.get<RawEventsResponse>("/v1/events", {
       query: {
         tagSlug: tag,

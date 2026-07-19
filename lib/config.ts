@@ -59,15 +59,55 @@ export const FRICTION = {
   takerFeeCoeff: 0.06,
 } as const;
 
-export const STRATEGY_CONFIG = {
-  // Flat stake per simulated trade (USD).
-  STAKE_USD: 2,
+/**
+ * Tours are kept as SEPARATE paper "books" so lower-tier ITF results (thinner,
+ * choppier markets) don't muddy the clean main-tour (ATP/WTA) data. Each book
+ * has its own bankroll, stake, and concurrency cap, and its own dashboard
+ * section. The same three strategies run inside both books.
+ */
+export type TourName = "main" | "itf";
 
-  // Max (match × strategy) positions tracked at once. Divided by the 3
-  // strategies, this is ~20 distinct matches. Kept within Polymarket's
-  // 60-requests/minute limit thanks to per-cycle price/state caching (each
-  // match is fetched once per poll and shared across its strategy units).
-  MAX_CONCURRENT: 60,
+export interface TourConfig {
+  label: string;
+  /** Polymarket sport tags that belong to this book. */
+  tags: string[];
+  /** Flat stake per simulated trade (USD) in this book. */
+  stake: number;
+  /** Starting paper bankroll (USD); balance = bankroll + net P/L. */
+  startingBankroll: number;
+  /** Max (match × strategy) positions tracked at once in this book. */
+  maxConcurrent: number;
+}
+
+export const TOURS = {
+  main: {
+    label: "Main Tour · ATP + WTA",
+    tags: ["atp", "wta"],
+    stake: 2,
+    startingBankroll: 10,
+    maxConcurrent: 36,
+  },
+  itf: {
+    label: "ITF Tour",
+    tags: ["itfme", "itfwo"],
+    stake: 2,
+    startingBankroll: 10,
+    maxConcurrent: 36,
+  },
+} satisfies Record<TourName, TourConfig>;
+
+export const TOUR_NAMES = Object.keys(TOURS) as TourName[];
+
+/**
+ * Max candidate price-probes per tour per poll. ITF has hundreds of (often
+ * book-less) markets; without this, discovery could fire hundreds of bbo calls
+ * chasing fills and blow Polymarket's 60-req/min limit. Fill resumes next poll.
+ */
+export const DISCOVERY_PROBE_BUDGET = 22;
+
+export const STRATEGY_CONFIG = {
+  // Flat stake fallback (per-tour `stake` overrides this in the engine).
+  STAKE_USD: 2,
 
   // How far ahead to look for not-yet-started matches (for pre-match entries).
   UPCOMING_WINDOW_HOURS: 3,

@@ -1,4 +1,4 @@
-import { getDashboardData, type Stats } from "@/lib/stats";
+import { getDashboardData, type BookData, type Stats } from "@/lib/stats";
 import { STRATEGY_NAMES } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ const EXIT_REASON_LABEL: Record<string, string> = {
 };
 
 export default async function Home() {
-  const data = await getDashboardData();
+  const { books } = await getDashboardData();
 
   return (
     <div className="flex flex-col flex-1 bg-zinc-50 dark:bg-black">
@@ -56,111 +56,115 @@ export default async function Home() {
           <p className="mt-1 text-sm font-medium text-amber-600">
             Paper trading only — no real orders are placed, no funds move.
           </p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Two separate paper books. Main tour (ATP/WTA) and ITF are kept apart so the thinner ITF
+            markets don&apos;t muddy the main-tour data. P/L is net of the live spread and Polymarket&apos;s
+            taker fee.
+          </p>
         </header>
 
-        <section className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-5">
-          <StatCard label="Net P/L" value={fmtUsd(data.overall.cumulativePnl)} valueClass={pnlClass(data.overall.cumulativePnl)} />
-          <StatCard label="Trades" value={String(data.overall.totalTrades)} />
-          <StatCard label="Win rate" value={fmtPct(data.overall.winRate)} />
-          <StatCard label="Expectancy / trade" value={fmtUsd(data.overall.expectancy)} valueClass={pnlClass(data.overall.expectancy)} />
-          <StatCard label="Fees paid" value={fmtUsd(data.overall.totalFees)} valueClass="text-zinc-500" />
-        </section>
-        <p className="mb-10 text-xs text-zinc-500">
-          P/L is net — fills pay the live bid/ask spread and Polymarket&apos;s taker fee. Hold-to-resolution exits incur no fee.
-        </p>
-
-        <section className="mb-10">
-          <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-            Strategy comparison
-          </h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {STRATEGY_NAMES.map((name) => (
-              <StrategyCard
-                key={name}
-                title={STRATEGY_LABEL[name] ?? name}
-                stats={data.perStrategy[name]}
-              />
-            ))}
-          </div>
-        </section>
-
-        {data.openTrades.length > 0 && (
-          <Section title="Open positions">
-            <Table
-              head={["Match", "Strategy", "Side", "Entry", "Entered", "Stake"]}
-              rows={data.openTrades.map((t) => [
-                t.label,
-                STRATEGY_LABEL[t.strategy] ?? t.strategy,
-                t.playerName,
-                t.entryPrice.toFixed(2),
-                fmtTime(t.entryAt),
-                fmtUsd(t.stake),
-              ])}
-            />
-          </Section>
-        )}
-
-        <Section title="Which entry prices pay (by bucket)">
-          {data.entryBuckets.length === 0 ? (
-            <Empty />
-          ) : (
-            <Table
-              head={["Entry price", "Trades", "Win rate", "Total P/L", "Expectancy"]}
-              rows={data.entryBuckets.map((b) => [
-                b.label,
-                String(b.tradeCount),
-                fmtPct(b.winRate),
-                { text: fmtUsd(b.pnl), className: pnlClass(b.pnl) },
-                { text: fmtUsd(b.expectancy), className: pnlClass(b.expectancy) },
-              ])}
-            />
-          )}
-        </Section>
-
-        <Section title="Per-trial (daily) P/L">
-          {data.dayPnl.length === 0 ? (
-            <Empty />
-          ) : (
-            <Table
-              head={["Date", "Trades", "Day P/L", "Cumulative P/L"]}
-              rows={[...data.dayPnl].reverse().map((d) => [
-                d.date,
-                String(d.tradeCount),
-                { text: fmtUsd(d.pnl), className: pnlClass(d.pnl) },
-                { text: fmtUsd(d.cumulativePnl), className: pnlClass(d.cumulativePnl) },
-              ])}
-            />
-          )}
-        </Section>
-
-        <Section title="Trade log">
-          {data.closedTrades.length === 0 ? (
-            <Empty />
-          ) : (
-            <Table
-              head={["Match", "Strategy", "Entry", "Exit", "Reason", "P/L"]}
-              rows={data.closedTrades.map((t) => [
-                t.label,
-                STRATEGY_LABEL[t.strategy] ?? t.strategy,
-                t.entryPrice.toFixed(2),
-                t.exitPrice !== null ? t.exitPrice.toFixed(2) : "—",
-                t.exitReason ? EXIT_REASON_LABEL[t.exitReason] ?? t.exitReason : "—",
-                { text: fmtUsd(t.pnl), className: pnlClass(t.pnl) },
-              ])}
-            />
-          )}
-        </Section>
+        {books.map((book) => (
+          <Book key={book.tour} book={book} />
+        ))}
       </main>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Book({ book }: { book: BookData }) {
+  const netPnl = book.overall.cumulativePnl;
+  const returnPct = book.startingBankroll > 0 ? netPnl / book.startingBankroll : null;
+
   return (
-    <section className="mb-10">
-      <h2 className="mb-3 text-lg font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
-      {children}
+    <section className="mb-14 border-t border-zinc-200 pt-8 first:border-t-0 first:pt-0 dark:border-zinc-800">
+      <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">{book.label}</h2>
+        <div className="text-sm text-zinc-500">
+          Bankroll{" "}
+          <span className={`text-base font-semibold ${pnlClass(book.balance - book.startingBankroll)}`}>
+            {fmtUsd(book.balance)}
+          </span>{" "}
+          <span className="text-zinc-400">(started ${book.startingBankroll.toFixed(0)})</span>
+        </div>
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <StatCard label="Net P/L" value={fmtUsd(netPnl)} valueClass={pnlClass(netPnl)} />
+        <StatCard label="Return" value={fmtPct(returnPct)} valueClass={pnlClass(returnPct)} />
+        <StatCard label="Trades" value={String(book.overall.totalTrades)} />
+        <StatCard label="Win rate" value={fmtPct(book.overall.winRate)} />
+        <StatCard label="Fees paid" value={fmtUsd(book.overall.totalFees)} valueClass="text-zinc-500" />
+      </div>
+
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+        Strategy comparison
+      </h3>
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {STRATEGY_NAMES.map((name) => (
+          <StrategyCard key={name} title={STRATEGY_LABEL[name] ?? name} stats={book.perStrategy[name]} />
+        ))}
+      </div>
+
+      {book.openTrades.length > 0 && (
+        <Sub title="Open positions">
+          <Table
+            head={["Match", "Strategy", "Side", "Entry", "Entered", "Stake"]}
+            rows={book.openTrades.map((t) => [
+              t.label,
+              STRATEGY_LABEL[t.strategy] ?? t.strategy,
+              t.playerName,
+              t.entryPrice.toFixed(2),
+              fmtTime(t.entryAt),
+              fmtUsd(t.stake),
+            ])}
+          />
+        </Sub>
+      )}
+
+      <Sub title="Which entry prices pay (by bucket)">
+        {book.entryBuckets.length === 0 ? (
+          <Empty />
+        ) : (
+          <Table
+            head={["Entry price", "Trades", "Win rate", "Total P/L", "Expectancy"]}
+            rows={book.entryBuckets.map((b) => [
+              b.label,
+              String(b.tradeCount),
+              fmtPct(b.winRate),
+              { text: fmtUsd(b.pnl), className: pnlClass(b.pnl) },
+              { text: fmtUsd(b.expectancy), className: pnlClass(b.expectancy) },
+            ])}
+          />
+        )}
+      </Sub>
+
+      <Sub title="Trade log">
+        {book.closedTrades.length === 0 ? (
+          <Empty />
+        ) : (
+          <Table
+            head={["Match", "Strategy", "Entry", "Exit", "Reason", "P/L"]}
+            rows={book.closedTrades.slice(0, 100).map((t) => [
+              t.label,
+              STRATEGY_LABEL[t.strategy] ?? t.strategy,
+              t.entryPrice.toFixed(2),
+              t.exitPrice !== null ? t.exitPrice.toFixed(2) : "—",
+              t.exitReason ? EXIT_REASON_LABEL[t.exitReason] ?? t.exitReason : "—",
+              { text: fmtUsd(t.pnl), className: pnlClass(t.pnl) },
+            ])}
+          />
+        )}
+      </Sub>
     </section>
+  );
+}
+
+function Sub({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-6">
+      <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">{title}</h3>
+      {children}
+    </div>
   );
 }
 
@@ -215,7 +219,7 @@ function StatCard({
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className={`mt-1 text-xl font-semibold ${valueClass ?? "text-zinc-900 dark:text-zinc-50"}`}>
+      <div className={`mt-1 text-lg font-semibold ${valueClass ?? "text-zinc-900 dark:text-zinc-50"}`}>
         {value}
       </div>
     </div>
@@ -226,7 +230,7 @@ function StrategyCard({ title, stats }: { title: string; stats: Stats }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">{title}</h3>
+        <h4 className="font-semibold text-zinc-900 dark:text-zinc-50">{title}</h4>
         <span className={`text-lg font-semibold ${pnlClass(stats.cumulativePnl)}`}>
           {fmtUsd(stats.cumulativePnl)}
         </span>

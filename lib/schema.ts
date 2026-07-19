@@ -9,6 +9,7 @@ export const trackedMatches = sqliteTable(
   "tracked_matches",
   {
     id: text("id").primaryKey(),
+    tour: text("tour", { enum: ["main", "itf"] }).notNull().default("main"),
     strategy: text("strategy", {
       enum: ["favorite_dip", "underdog_momentum", "underdog_pre_match"],
     }).notNull(),
@@ -35,6 +36,7 @@ export const trades = sqliteTable("trades", {
   matchId: text("match_id")
     .notNull()
     .references(() => trackedMatches.id),
+  tour: text("tour", { enum: ["main", "itf"] }).notNull().default("main"),
   strategy: text("strategy", {
     enum: ["favorite_dip", "underdog_momentum", "underdog_pre_match"],
   }).notNull(),

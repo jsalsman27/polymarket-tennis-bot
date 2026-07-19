@@ -1,7 +1,14 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "./db";
 import { trackedMatches, trades, priceSnapshots } from "./schema";
-import { STRATEGY_CONFIG, STRATEGY_NAMES, type StrategyName } from "./config";
+import {
+  STRATEGY_NAMES,
+  TOURS,
+  TOUR_NAMES,
+  DISCOVERY_PROBE_BUDGET,
+  type StrategyName,
+  type TourName,
+} from "./config";
 import {
   discoverTrackableMatches,
   getPriceReading,
@@ -129,13 +136,15 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
       return;
     }
     // Fill the buy at the ask (spread cost) and pay the entry taker fee.
+    const stake = TOURS[match.tour as TourName].stake;
     const entryFill = buyFill(side, mid, reading.longBid, reading.longAsk);
-    const shares = STRATEGY_CONFIG.STAKE_USD / entryFill;
+    const shares = stake / entryFill;
     const entryFee = takerFee(shares, entryFill);
 
     await db.insert(trades).values({
       id: crypto.randomUUID(),
       matchId: match.id,
+      tour: match.tour,
       strategy: match.strategy,
       eventSlug: match.eventSlug,
       marketSlug: match.marketSlug,
@@ -144,7 +153,7 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
       entryPrice: entryFill,
       entryAt: now,
       peakPrice: mid, // trailing high-water mark tracks the mid price
-      stake: STRATEGY_CONFIG.STAKE_USD,
+      stake,
       fees: entryFee,
       tradeDate: dateKey(now),
     });
@@ -188,67 +197,72 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
 }
 
 async function discoverAndTrack(cache: PollCache) {
-  const now = Date.now();
   const openMatches = await db
-    .select()
+    .select({ tour: trackedMatches.tour })
     .from(trackedMatches)
     .where(inArray(trackedMatches.status, [...OPEN_STATUSES]));
 
-  let slotsAvailable = STRATEGY_CONFIG.MAX_CONCURRENT - openMatches.length;
-  if (slotsAvailable <= 0) return;
-
   // Dedup against EVERY tracked unit, not just open ones — a (match × strategy)
-  // is only ever tracked once (no re-entry after it exits/resolves). Using only
-  // open matches here previously caused a unique-constraint crash once a unit
-  // closed and discovery tried to re-track the same match.
+  // is only ever tracked once (no re-entry after it exits/resolves).
   const allTracked = await db
     .select({ marketSlug: trackedMatches.marketSlug, strategy: trackedMatches.strategy })
     .from(trackedMatches);
   const trackedKeys = new Set(allTracked.map((m) => `${m.marketSlug}::${m.strategy}`));
 
-  const candidates = await discoverTrackableMatches();
+  // Each tour (book) fills its own slots independently, so ITF's large, thin
+  // pool can't crowd out the main-tour book.
+  for (const tour of TOUR_NAMES) {
+    const cfgTour = TOURS[tour];
+    const openInTour = openMatches.filter((m) => m.tour === tour).length;
+    let slotsAvailable = cfgTour.maxConcurrent - openInTour;
+    if (slotsAvailable <= 0) continue;
 
-  for (const candidate of candidates) {
-    if (slotsAvailable <= 0) break;
+    const candidates = await discoverTrackableMatches(cfgTour.tags);
+    let probes = 0;
 
-    const reading = await cache.price_(candidate.marketSlug);
-    if (reading.longPrice === null) continue;
-
-    for (const strategyName of STRATEGY_NAMES) {
+    for (const candidate of candidates) {
       if (slotsAvailable <= 0) break;
-      const cfg = getStrategyConfig(strategyName);
-      if (!cfg.enabled) continue;
+      if (probes >= DISCOVERY_PROBE_BUDGET) break; // cap API calls per tour per poll
 
-      const key = `${candidate.marketSlug}::${strategyName}`;
-      if (trackedKeys.has(key)) continue;
+      probes += 1;
+      const reading = await cache.price_(candidate.marketSlug);
+      if (reading.longPrice === null) continue;
 
-      const side = sideToTrack(cfg, reading.longPrice);
-      if (!side) continue;
+      for (const strategyName of STRATEGY_NAMES) {
+        if (slotsAvailable <= 0) break;
+        const cfg = getStrategyConfig(strategyName);
+        if (!cfg.enabled) continue;
 
-      const openingPrice = sidePrice(reading.longPrice, side);
-      const playerName = side === "long" ? candidate.longName : candidate.shortName;
+        const key = `${candidate.marketSlug}::${strategyName}`;
+        if (trackedKeys.has(key)) continue;
 
-      // onConflictDoNothing is a belt-and-suspenders guard: even if a duplicate
-      // slips through, it becomes a no-op instead of throwing and aborting the poll.
-      await db
-        .insert(trackedMatches)
-        .values({
-          id: crypto.randomUUID(),
-          strategy: strategyName,
-          eventSlug: candidate.eventSlug,
-          marketSlug: candidate.marketSlug,
-          label: candidate.label,
-          side,
-          playerName,
-          openingPrice,
-          status: "watching",
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoNothing();
+        const side = sideToTrack(cfg, reading.longPrice);
+        if (!side) continue;
 
-      trackedKeys.add(key);
-      slotsAvailable -= 1;
+        const openingPrice = sidePrice(reading.longPrice, side);
+        const playerName = side === "long" ? candidate.longName : candidate.shortName;
+
+        await db
+          .insert(trackedMatches)
+          .values({
+            id: crypto.randomUUID(),
+            tour,
+            strategy: strategyName,
+            eventSlug: candidate.eventSlug,
+            marketSlug: candidate.marketSlug,
+            label: candidate.label,
+            side,
+            playerName,
+            openingPrice,
+            status: "watching",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          })
+          .onConflictDoNothing();
+
+        trackedKeys.add(key);
+        slotsAvailable -= 1;
+      }
     }
   }
 }
