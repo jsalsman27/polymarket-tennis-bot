@@ -14,8 +14,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await runPollCycle();
-    return NextResponse.json({ ok: true, polledAt: new Date().toISOString() });
+    const result = await runPollCycle();
+    if (result.errors.length > 0) {
+      console.error("poll cycle had per-match errors", result.errors);
+    }
+    return NextResponse.json({
+      ok: true,
+      polledAt: new Date().toISOString(),
+      polled: result.polled,
+      errors: result.errors,
+    });
   } catch (err) {
     console.error("poll cycle failed", err);
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });

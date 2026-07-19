@@ -167,7 +167,14 @@ async function discoverAndTrack() {
   let slotsAvailable = STRATEGY_CONFIG.MAX_CONCURRENT - openMatches.length;
   if (slotsAvailable <= 0) return;
 
-  const trackedKeys = new Set(openMatches.map((m) => `${m.marketSlug}::${m.strategy}`));
+  // Dedup against EVERY tracked unit, not just open ones — a (match × strategy)
+  // is only ever tracked once (no re-entry after it exits/resolves). Using only
+  // open matches here previously caused a unique-constraint crash once a unit
+  // closed and discovery tried to re-track the same match.
+  const allTracked = await db
+    .select({ marketSlug: trackedMatches.marketSlug, strategy: trackedMatches.strategy })
+    .from(trackedMatches);
+  const trackedKeys = new Set(allTracked.map((m) => `${m.marketSlug}::${m.strategy}`));
 
   const candidates = await discoverTrackableMatches();
 
@@ -191,19 +198,24 @@ async function discoverAndTrack() {
       const openingPrice = sidePrice(reading.longPrice, side);
       const playerName = side === "long" ? candidate.longName : candidate.shortName;
 
-      await db.insert(trackedMatches).values({
-        id: crypto.randomUUID(),
-        strategy: strategyName,
-        eventSlug: candidate.eventSlug,
-        marketSlug: candidate.marketSlug,
-        label: candidate.label,
-        side,
-        playerName,
-        openingPrice,
-        status: "watching",
-        createdAt: now,
-        updatedAt: now,
-      });
+      // onConflictDoNothing is a belt-and-suspenders guard: even if a duplicate
+      // slips through, it becomes a no-op instead of throwing and aborting the poll.
+      await db
+        .insert(trackedMatches)
+        .values({
+          id: crypto.randomUUID(),
+          strategy: strategyName,
+          eventSlug: candidate.eventSlug,
+          marketSlug: candidate.marketSlug,
+          label: candidate.label,
+          side,
+          playerName,
+          openingPrice,
+          status: "watching",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing();
 
       trackedKeys.add(key);
       slotsAvailable -= 1;
@@ -218,9 +230,22 @@ export async function runPollCycle() {
     .from(trackedMatches)
     .where(inArray(trackedMatches.status, [...OPEN_STATUSES]));
 
+  const errors: string[] = [];
+
+  // Isolate each match: one bad API call / row shouldn't abort the whole cycle.
   for (const match of openMatches) {
-    await pollTrackedMatch(match);
+    try {
+      await pollTrackedMatch(match);
+    } catch (err) {
+      errors.push(`poll ${match.marketSlug} [${match.strategy}]: ${String(err)}`);
+    }
   }
 
-  await discoverAndTrack();
+  try {
+    await discoverAndTrack();
+  } catch (err) {
+    errors.push(`discover: ${String(err)}`);
+  }
+
+  return { polled: openMatches.length, errors };
 }
