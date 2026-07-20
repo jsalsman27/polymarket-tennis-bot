@@ -152,6 +152,9 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
     // Fill the buy at the ask (spread cost) and pay the entry taker fee.
     const stake = TOURS[match.tour as TourName].stake;
     const entryFill = buyFill(side, mid, reading.longBid, reading.longAsk);
+    // Reject fills the spread pushed outside the band — don't overpay on thin
+    // markets, and keep the % take-profit target reachable (< 1.0).
+    if (entryFill < cfg.entryMin || entryFill > cfg.entryMax) return;
     const shares = stake / entryFill;
     const entryFee = takerFee(shares, entryFill);
 

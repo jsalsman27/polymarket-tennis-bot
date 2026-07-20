@@ -43,3 +43,6 @@ next-env.d.ts
 # local sqlite db (dev only — see README for prod persistence setup)
 /data/*.db
 /data/*.db-*
+
+# personal trade history (never commit)
+data/my-trades.json

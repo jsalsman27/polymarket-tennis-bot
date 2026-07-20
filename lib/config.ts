@@ -19,7 +19,11 @@
  * never fixed price zones — those don't scale across a wide entry range.
  */
 
-export type StrategyName = "favorite_dip" | "underdog_momentum" | "underdog_pre_match";
+export type StrategyName =
+  | "back_favorite"
+  | "favorite_dip"
+  | "underdog_momentum"
+  | "underdog_pre_match";
 
 export interface StrategyConfig {
   enabled: boolean;
@@ -103,7 +107,8 @@ export const TOURS = {
   },
   itf: {
     label: "ITF Tour",
-    tags: ["itfme", "itfwo"],
+    // itfme only — the user's real trades were +$58 on itfme, -$10 on itfwo.
+    tags: ["itfme"],
     stake: 2,
     startingBankroll: 10,
     maxConcurrent: 36,
@@ -133,8 +138,36 @@ export const STRATEGY_CONFIG = {
   POLL_INTERVAL_MINUTES: 5,
 
   strategies: {
-    favorite_dip: {
+    /**
+     * THE strategy — a mechanical replica of the user's proven edge, derived
+     * from 256 of their real trades:
+     *  - They MAKE money buying FAVORITES (0.5-0.9 was +$240); they LOSE buying
+     *    underdogs/longshots (<0.5 was -$95). So: back favorites only.
+     *  - They MAKE money when they actively sell (+$265); they LOSE when they
+     *    bag-hold to resolution (-$84, disposition effect). So: hard TP + a
+     *    real stop that cuts losers small — never ride one to zero.
+     * Enters a favorite whose current price sits in the sweet spot (0.55-0.85):
+     * not a coin-flip (<0.55), not an overpriced lock (>0.85).
+     */
+    back_favorite: {
       enabled: true,
+      track: "favorite",
+      openingThreshold: 0.55,
+      entryMin: 0.55,
+      // Cap at 0.80: above this the risk/reward is poor and a % take-profit
+      // target would exceed 1.0 (unreachable). The engine also rejects fills
+      // whose ask is above entryMax, so wide spreads can't push us to overpay.
+      entryMax: 0.8,
+      entryDirection: "none",
+      minCompletedSets: 0, // back favorites pre-match or in-play, like the user does
+      exitStyle: "relative",
+      takeProfitPct: 0.2, // +20% — reachable across the band, locks a solid gain
+      stopLossPct: 0.15, // cut the loser SMALL — the fix for bag-holding to $0
+    },
+    // --- Disabled: the user's data proved these are net losers. Kept for
+    //     reference / possible re-test, but they don't trade. ---
+    favorite_dip: {
+      enabled: false, // buying the crater (0.2-0.4) LOST in the user's real trades
       track: "favorite",
       // Only STRONG favorites (opened >= 0.68) that CRATERED into 0.20-0.40 —
       // a genuine overreaction to dropping set 1, not a close match.
@@ -152,7 +185,7 @@ export const STRATEGY_CONFIG = {
       stopLossPct: 0.3,
     },
     underdog_momentum: {
-      enabled: true,
+      enabled: false, // buying underdogs was the user's -$95 leak
       track: "underdog",
       openingThreshold: 0.55,
       entryMin: 0.1,
@@ -164,7 +197,7 @@ export const STRATEGY_CONFIG = {
       stopLossPct: 0.3,
     },
     underdog_pre_match: {
-      enabled: true,
+      enabled: false, // buying cheap dogs pre-match was part of the -$95 leak
       track: "underdog",
       openingThreshold: 0.55, // favorite >= 0.55, so underdog <= 0.45
       entryMin: 0.1,
@@ -184,3 +217,8 @@ export const STRATEGY_CONFIG = {
 } as const;
 
 export const STRATEGY_NAMES = Object.keys(STRATEGY_CONFIG.strategies) as StrategyName[];
+
+/** Only the strategies currently turned on — used for the dashboard. */
+export const ENABLED_STRATEGY_NAMES = STRATEGY_NAMES.filter(
+  (n) => STRATEGY_CONFIG.strategies[n].enabled
+);

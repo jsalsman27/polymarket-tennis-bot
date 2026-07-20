@@ -1,5 +1,5 @@
 import { getDashboardData, type BookData, type Stats } from "@/lib/stats";
-import { STRATEGY_NAMES } from "@/lib/config";
+import { ENABLED_STRATEGY_NAMES } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,7 @@ function pnlClass(n: number | null | undefined): string {
 }
 
 const STRATEGY_LABEL: Record<string, string> = {
+  back_favorite: "Back the favorite",
   favorite_dip: "Favorite dip",
   underdog_momentum: "Underdog momentum",
   underdog_pre_match: "Underdog pre-match",
@@ -99,8 +100,8 @@ function Book({ book }: { book: BookData }) {
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
         Strategy comparison
       </h3>
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {STRATEGY_NAMES.map((name) => (
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {ENABLED_STRATEGY_NAMES.map((name) => (
           <StrategyCard key={name} title={STRATEGY_LABEL[name] ?? name} stats={book.perStrategy[name]} />
         ))}
       </div>
