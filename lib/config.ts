@@ -32,6 +32,12 @@ export interface StrategyConfig {
   entryMax: number;
   /** Directional confirmation vs. opening: "dip" (fell), "rise" (climbed), "none". */
   entryDirection: "dip" | "rise" | "none";
+  /**
+   * Optional minimum move size (fraction of opening) the dip/rise must clear —
+   * filters tiny noise wiggles so entries require a MEANINGFUL move. e.g. 0.10
+   * on a rise means current must be >= opening × 1.10.
+   */
+  minMovePct?: number;
   /** Require at least this many COMPLETED sets before entering. */
   minCompletedSets: number;
   /** Optional: do NOT enter once more than this many sets have completed. */
@@ -149,9 +155,14 @@ export const STRATEGY_CONFIG = {
       openingThreshold: 0.55, // favorite >= 0.55, so underdog <= 0.45
       entryMin: 0.1,
       entryMax: 0.45,
-      entryDirection: "none", // no signal — this is the pre-match longshot bet
+      // Selective now: only buy a cheap underdog that shows EARLY STRENGTH —
+      // its price climbing >=10% off where we first saw it, before set 1 ends.
+      // (Indiscriminate "buy every dog" (entryDirection none) lost badly: the
+      // mechanical version had no edge because most cheap dogs just drift down.)
+      entryDirection: "rise",
+      minMovePct: 0.1,
       minCompletedSets: 0,
-      maxCompletedSets: 0, // only enter before set 1 finishes (pre-match / early)
+      maxCompletedSets: 0, // still an early/pre-match entry (before set 1 finishes)
       exitStyle: "trailing",
       trailPct: 0.18, // sell once it slips 18% off its highest price since entry
     },

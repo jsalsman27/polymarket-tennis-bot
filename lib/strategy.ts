@@ -84,11 +84,12 @@ export function decideEntry(
   if (currentPrice < cfg.entryMin || currentPrice > cfg.entryMax) {
     return { action: "wait" };
   }
-  if (cfg.entryDirection === "dip" && !(currentPrice < openingPrice)) {
-    return { action: "wait" };
+  const move = cfg.minMovePct ?? 0;
+  if (cfg.entryDirection === "dip") {
+    if (!(currentPrice <= openingPrice * (1 - move))) return { action: "wait" };
   }
-  if (cfg.entryDirection === "rise" && !(currentPrice > openingPrice)) {
-    return { action: "wait" };
+  if (cfg.entryDirection === "rise") {
+    if (!(currentPrice >= openingPrice * (1 + move))) return { action: "wait" };
   }
   return { action: "enter" };
 }
