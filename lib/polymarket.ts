@@ -94,10 +94,20 @@ export interface PriceReading {
   looksResolved: boolean;
 }
 
+/** Games in one set, from the score string (always long-player-first). */
+export interface SetScore {
+  long: number;
+  short: number;
+}
+
 export interface MatchState {
   period: string | null;
   /** Number of fully completed sets, derived from `period` (S2 => 1, FT => finished). */
   completedSets: number;
+  /** Per-completed-set games (long-first). Empty if none/unknown. */
+  completedSetScores: SetScore[];
+  /** Games so far in the in-progress set (long-first), or null. */
+  currentSet: SetScore | null;
   closed: boolean;
   live: boolean;
 }
@@ -182,15 +192,36 @@ function completedSetsFromPeriod(period: string | null | undefined, score?: stri
   return 0;
 }
 
-/** Live match state (set progress) for entry gating. Fetches the event by slug. */
+/**
+ * Parse a score string like "4-6, 7-6(7-5), 7-5, 6-2" or "6-2:30-15" into
+ * per-set games (long-player-first). Strips tiebreak "(7-5)" and current-game
+ * point suffixes ":30-15". Returns one SetScore per comma-separated set.
+ */
+function parseScoreSets(score: string | null | undefined): SetScore[] {
+  if (!score) return [];
+  const out: SetScore[] = [];
+  for (const raw of score.split(",")) {
+    const cleaned = raw.trim().split(":")[0].replace(/\([^)]*\)/g, "").trim();
+    const m = cleaned.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!m) continue;
+    out.push({ long: parseInt(m[1], 10), short: parseInt(m[2], 10) });
+  }
+  return out;
+}
+
+/** Live match state (set progress + parsed score) for entry gating. */
 export async function getMatchState(eventSlug: string): Promise<MatchState> {
   const res = await client.get<{ event: RawEvent & { score?: string } }>(
     `/v1/events/slug/${eventSlug}`
   );
   const e = res.event;
+  const completedSets = completedSetsFromPeriod(e?.period, e?.score);
+  const allSets = parseScoreSets(e?.score);
   return {
     period: e?.period ?? null,
-    completedSets: completedSetsFromPeriod(e?.period, e?.score),
+    completedSets,
+    completedSetScores: allSets.slice(0, completedSets),
+    currentSet: allSets[completedSets] ?? null,
     closed: Boolean(e?.closed),
     live: Boolean(e?.live),
   };

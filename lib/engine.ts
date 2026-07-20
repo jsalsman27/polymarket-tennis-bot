@@ -132,7 +132,21 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
 
   if (match.status === "watching") {
     const state = await cache.state_(match.eventSlug);
-    if (decideEntry(cfg, mid, match.openingPrice, state.completedSets).action !== "enter") {
+
+    // Build the score context for the tracked side: if it lost set 1, how many
+    // games it won there (for the recoverability gate). Score is long-first.
+    let gamesInLostSet1: number | null = null;
+    const set1 = state.completedSetScores[0];
+    if (set1) {
+      const mineS1 = side === "long" ? set1.long : set1.short;
+      const oppS1 = side === "long" ? set1.short : set1.long;
+      if (mineS1 < oppS1) gamesInLostSet1 = mineS1; // lost set 1 with this many games
+    }
+
+    if (
+      decideEntry(cfg, mid, match.openingPrice, state.completedSets, { gamesInLostSet1 })
+        .action !== "enter"
+    ) {
       return;
     }
     // Fill the buy at the ask (spread cost) and pay the entry taker fee.

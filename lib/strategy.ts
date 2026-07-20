@@ -69,12 +69,21 @@ export function sideToTrack(
 
 export type EntryDecision = { action: "enter" } | { action: "wait" };
 
+export interface ScoreContext {
+  /**
+   * If the tracked side LOST set 1, how many games they won in it (0-6);
+   * null if they didn't lose set 1, or the score is unknown.
+   */
+  gamesInLostSet1: number | null;
+}
+
 /** Should we open a simulated position now, given the tracked side's prices? */
 export function decideEntry(
   cfg: StrategyConfig,
   currentPrice: number,
   openingPrice: number,
-  completedSets: number
+  completedSets: number,
+  score?: ScoreContext
 ): EntryDecision {
   // Set-state gate: min (real-signal) and optional max (pre-match only).
   if (completedSets < cfg.minCompletedSets) return { action: "wait" };
@@ -90,6 +99,12 @@ export function decideEntry(
   }
   if (cfg.entryDirection === "rise") {
     if (!(currentPrice >= openingPrice * (1 + move))) return { action: "wait" };
+  }
+  // Recoverability gate: only fade a favorite who lost set 1 competitively.
+  if (cfg.requireRecoverableSet1) {
+    const g = score?.gamesInLostSet1;
+    if (g === null || g === undefined) return { action: "wait" };
+    if (g < (cfg.minGamesInLostSet ?? 4)) return { action: "wait" };
   }
   return { action: "enter" };
 }

@@ -50,6 +50,14 @@ export interface StrategyConfig {
   stopLossPct?: number;
   /** Trailing exit: sell once price falls this fraction below its peak since entry. */
   trailPct?: number;
+  /**
+   * Recoverability gate (favorite mean-reversion). If true, only enter when the
+   * tracked side actually LOST set 1 but competitively — won at least
+   * `minGamesInLostSet` games in it. Fades panic on a close set (recoverable),
+   * skips genuine blowouts (0-6/1-6, where the low price is correct).
+   */
+  requireRecoverableSet1?: boolean;
+  minGamesInLostSet?: number;
 }
 
 /**
@@ -128,11 +136,17 @@ export const STRATEGY_CONFIG = {
     favorite_dip: {
       enabled: true,
       track: "favorite",
-      openingThreshold: 0.55,
-      entryMin: 0.12,
-      entryMax: 0.45,
+      // Only STRONG favorites (opened >= 0.68) that CRATERED into 0.20-0.40 —
+      // a genuine overreaction to dropping set 1, not a close match.
+      openingThreshold: 0.68,
+      entryMin: 0.2,
+      entryMax: 0.4,
       entryDirection: "dip",
       minCompletedSets: 1,
+      // Score gate: favorite must have lost set 1 competitively (>=4 games),
+      // i.e. a recoverable 4-6/5-7/6-7 — not a 0-6/1-6 blowout.
+      requireRecoverableSet1: true,
+      minGamesInLostSet: 4,
       exitStyle: "relative",
       takeProfitPct: 0.35,
       stopLossPct: 0.3,
