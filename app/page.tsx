@@ -30,7 +30,7 @@ function pnlClass(n: number | null | undefined): string {
 }
 
 const STRATEGY_LABEL: Record<string, string> = {
-  back_favorite: "Back the favorite",
+  back_favorite: "Back leading favorite",
   favorite_dip: "Favorite dip",
   underdog_momentum: "Underdog momentum",
   underdog_pre_match: "Underdog pre-match",

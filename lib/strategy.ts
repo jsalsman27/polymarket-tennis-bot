@@ -75,6 +75,8 @@ export interface ScoreContext {
    * null if they didn't lose set 1, or the score is unknown.
    */
   gamesInLostSet1: number | null;
+  /** True if the tracked side has won more completed sets than the opponent. */
+  leadingOnSets?: boolean;
 }
 
 /** Should we open a simulated position now, given the tracked side's prices? */
@@ -105,6 +107,10 @@ export function decideEntry(
     const g = score?.gamesInLostSet1;
     if (g === null || g === undefined) return { action: "wait" };
     if (g < (cfg.minGamesInLostSet ?? 4)) return { action: "wait" };
+  }
+  // Leading gate: only back a favorite who is ahead on sets (closing it out).
+  if (cfg.requireLeadingOnSets && !score?.leadingOnSets) {
+    return { action: "wait" };
   }
   return { action: "enter" };
 }

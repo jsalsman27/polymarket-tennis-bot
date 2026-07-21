@@ -62,6 +62,13 @@ export interface StrategyConfig {
    */
   requireRecoverableSet1?: boolean;
   minGamesInLostSet?: number;
+  /**
+   * If true, only enter when the tracked (favorite) side is LEADING on sets —
+   * has won more completed sets than the opponent. Backs a favorite who's
+   * already ahead / closing the match out (much higher, steadier win prob),
+   * which is the user's real edge and far less prone to catastrophic gaps.
+   */
+  requireLeadingOnSets?: boolean;
 }
 
 /**
@@ -139,30 +146,29 @@ export const STRATEGY_CONFIG = {
 
   strategies: {
     /**
-     * THE strategy — a mechanical replica of the user's proven edge, derived
-     * from 256 of their real trades:
-     *  - They MAKE money buying FAVORITES (0.5-0.9 was +$240); they LOSE buying
-     *    underdogs/longshots (<0.5 was -$95). So: back favorites only.
-     *  - They MAKE money when they actively sell (+$265); they LOSE when they
-     *    bag-hold to resolution (-$84, disposition effect). So: hard TP + a
-     *    real stop that cuts losers small — never ride one to zero.
-     * Enters a favorite whose current price sits in the sweet spot (0.55-0.85):
-     * not a coin-flip (<0.55), not an overpriced lock (>0.85).
+     * THE strategy — mechanizes the user's real edge (from 256 of their trades:
+     * favorites +$240, longshots -$95; their best bands 0.7-0.9 were LEADING
+     * favorites) plus their own insight: only back a favorite once they're
+     * AHEAD ON SETS (won set 1 / closing the match out). That's a much higher,
+     * steadier win prob, exploits favorite-longshot bias at the extreme, and
+     * almost never suffers the -97% catastrophe gaps that wreck stops.
+     * Exit: hold WINNERS to resolution (they win -> $1.0; no TP set), while a
+     * tight -15% stop cuts the ones that turn (backed by the 1-min fast loop).
      */
     back_favorite: {
       enabled: true,
       track: "favorite",
       openingThreshold: 0.55,
-      entryMin: 0.55,
-      // Cap at 0.80: above this the risk/reward is poor and a % take-profit
-      // target would exceed 1.0 (unreachable). The engine also rejects fills
-      // whose ask is above entryMax, so wide spreads can't push us to overpay.
-      entryMax: 0.8,
+      entryMin: 0.6,
+      // Cap at 0.88 (fill guard rejects asks above this): above it there's
+      // almost no upside left. No TP, so the price nearing 1.0 isn't a problem.
+      entryMax: 0.88,
       entryDirection: "none",
-      minCompletedSets: 0, // back favorites pre-match or in-play, like the user does
+      minCompletedSets: 1, // must have a completed set to be "leading"
+      requireLeadingOnSets: true, // the key: only back a favorite who's AHEAD
       exitStyle: "relative",
-      takeProfitPct: 0.2, // +20% — reachable across the band, locks a solid gain
-      stopLossPct: 0.15, // cut the loser SMALL — the fix for bag-holding to $0
+      // No takeProfitPct -> winners ride to resolution (favorite closes it out).
+      stopLossPct: 0.15, // cut the ones that turn, small
     },
     // --- Disabled: the user's data proved these are net losers. Kept for
     //     reference / possible re-test, but they don't trade. ---

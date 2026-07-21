@@ -133,8 +133,7 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
   if (match.status === "watching") {
     const state = await cache.state_(match.eventSlug);
 
-    // Build the score context for the tracked side: if it lost set 1, how many
-    // games it won there (for the recoverability gate). Score is long-first.
+    // Build the score context for the tracked side. Score is long-first.
     let gamesInLostSet1: number | null = null;
     const set1 = state.completedSetScores[0];
     if (set1) {
@@ -143,9 +142,22 @@ async function pollTrackedMatch(match: TrackedMatch, cache: PollCache) {
       if (mineS1 < oppS1) gamesInLostSet1 = mineS1; // lost set 1 with this many games
     }
 
+    // Sets won by each side across completed sets → is the tracked side leading?
+    let mySets = 0;
+    let oppSets = 0;
+    for (const s of state.completedSetScores) {
+      const mine = side === "long" ? s.long : s.short;
+      const opp = side === "long" ? s.short : s.long;
+      if (mine > opp) mySets += 1;
+      else if (opp > mine) oppSets += 1;
+    }
+    const leadingOnSets = mySets > oppSets;
+
     if (
-      decideEntry(cfg, mid, match.openingPrice, state.completedSets, { gamesInLostSet1 })
-        .action !== "enter"
+      decideEntry(cfg, mid, match.openingPrice, state.completedSets, {
+        gamesInLostSet1,
+        leadingOnSets,
+      }).action !== "enter"
     ) {
       return;
     }
