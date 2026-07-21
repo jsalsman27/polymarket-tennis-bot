@@ -48,6 +48,7 @@ interface RawEvent {
   closed?: boolean;
   live?: boolean;
   period?: string;
+  score?: string;
   markets?: RawMarket[];
 }
 
@@ -81,6 +82,8 @@ export interface LiveTennisMatch {
   longName: string;
   /** Player name on the "short" side; price = 1 - long price. */
   shortName: string;
+  /** Completed sets at discovery time — used to only lock the favorite pre-set-1. */
+  completedSets: number;
 }
 
 export interface PriceReading {
@@ -159,6 +162,7 @@ export async function discoverTrackableMatches(tags: string[]): Promise<LiveTenn
         label: `${longSide.description} vs ${shortSide.description}`,
         longName: longSide.description,
         shortName: shortSide.description,
+        completedSets: completedSetsFromPeriod(event.period, event.score),
       });
     }
   }

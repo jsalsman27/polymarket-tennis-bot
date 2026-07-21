@@ -253,6 +253,12 @@ async function discoverAndTrack(cache: PollCache) {
       if (slotsAvailable <= 0) break;
       if (probes >= DISCOVERY_PROBE_BUDGET) break; // cap API calls per tour per poll
 
+      // Only lock in "the favorite" from BEFORE any set is decided. If we first
+      // see a match mid-way (a set already completed), the current price reflects
+      // that set's result — an underdog who won set 1 looks like the "favorite".
+      // Skip those so `favorite` is always the genuine pre-match favorite.
+      if (candidate.completedSets >= 1) continue;
+
       probes += 1;
       const reading = await cache.price_(candidate.marketSlug);
       if (reading.longPrice === null) continue;
