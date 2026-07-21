@@ -103,7 +103,7 @@ export const TOURS = {
     tags: ["atp", "wta"],
     stake: 2,
     startingBankroll: 10,
-    maxConcurrent: 36,
+    maxConcurrent: 18,
   },
   itf: {
     label: "ITF Tour",
@@ -111,7 +111,7 @@ export const TOURS = {
     tags: ["itfme"],
     stake: 2,
     startingBankroll: 10,
-    maxConcurrent: 36,
+    maxConcurrent: 18,
   },
 } satisfies Record<TourName, TourConfig>;
 

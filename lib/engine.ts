@@ -311,3 +311,30 @@ export async function runPollCycle() {
 
   return { polled: openMatches.length, errors };
 }
+
+/**
+ * Fast loop: re-check ONLY currently-open (entered) positions for exits. Meant
+ * to run every ~1 minute so stop-losses fire near their target instead of
+ * slipping 15%+ between the slow 5-minute discovery polls. It does no discovery
+ * and touches only entered positions (a handful), so it stays well within the
+ * 60-req/min rate limit.
+ */
+export async function runFastExitCheck() {
+  const entered = await db
+    .select()
+    .from(trackedMatches)
+    .where(eq(trackedMatches.status, "entered"));
+
+  const errors: string[] = [];
+  const cache = new PollCache();
+
+  for (const match of entered) {
+    try {
+      await pollTrackedMatch(match, cache);
+    } catch (err) {
+      errors.push(`fast ${match.marketSlug}: ${String(err)}`);
+    }
+  }
+
+  return { checked: entered.length, errors };
+}
