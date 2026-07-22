@@ -21,6 +21,7 @@
 
 export type StrategyName =
   | "back_favorite"
+  | "back_favorite_hold"
   | "favorite_dip"
   | "underdog_momentum"
   | "underdog_pre_match";
@@ -169,6 +170,24 @@ export const STRATEGY_CONFIG = {
       exitStyle: "relative",
       // No takeProfitPct -> winners ride to resolution (favorite closes it out).
       stopLossPct: 0.15, // cut the ones that turn, small
+    },
+    /**
+     * A/B twin of back_favorite: identical entry (leading favorites), but NO
+     * stop-loss — holds every position to resolution. Tests whether the -15%
+     * stop is cutting eventual winners (then this beats it) or correctly cutting
+     * losers (then back_favorite beats it). Same markets => clean head-to-head.
+     */
+    back_favorite_hold: {
+      enabled: true,
+      track: "favorite",
+      openingThreshold: 0.55,
+      entryMin: 0.6,
+      entryMax: 0.88,
+      entryDirection: "none",
+      minCompletedSets: 1,
+      requireLeadingOnSets: true,
+      exitStyle: "relative",
+      // No takeProfitPct AND no stopLossPct -> pure hold to resolution.
     },
     // --- Disabled: the user's data proved these are net losers. Kept for
     //     reference / possible re-test, but they don't trade. ---
