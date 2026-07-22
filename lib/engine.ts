@@ -83,8 +83,12 @@ function midFor(reading: PriceReading, side: Side): number | null {
 
 async function closeAsResolved(match: TrackedMatch, now: number) {
   const settlement = await getSettlement(match.marketSlug);
-  const longSettlement = settlement ?? 0.5; // push fallback if unavailable
-  const finalPrice = sidePrice(longSettlement, match.side as Side);
+  // The market goes "closed" a few minutes BEFORE settlement is posted. If we
+  // close now with a 0.5 push fallback, every favorite who actually WON gets
+  // mis-booked as a loss (we bought them above 0.5). So if settlement isn't
+  // available yet, leave the position open and retry next poll until it is.
+  if (settlement === null) return;
+  const finalPrice = sidePrice(settlement, match.side as Side);
 
   if (match.status === "entered") {
     const openTrade = await openTradeFor(match.id);
