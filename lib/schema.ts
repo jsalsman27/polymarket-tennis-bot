@@ -14,6 +14,7 @@ export const trackedMatches = sqliteTable(
       enum: [
       "back_favorite",
       "back_favorite_hold",
+      "underdog_pop",
       "favorite_dip",
       "underdog_momentum",
       "underdog_pre_match",
@@ -47,6 +48,7 @@ export const trades = sqliteTable("trades", {
     enum: [
       "back_favorite",
       "back_favorite_hold",
+      "underdog_pop",
       "favorite_dip",
       "underdog_momentum",
       "underdog_pre_match",

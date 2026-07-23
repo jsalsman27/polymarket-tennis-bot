@@ -22,6 +22,7 @@
 export type StrategyName =
   | "back_favorite"
   | "back_favorite_hold"
+  | "underdog_pop"
   | "favorite_dip"
   | "underdog_momentum"
   | "underdog_pre_match";
@@ -147,7 +148,29 @@ export const STRATEGY_CONFIG = {
 
   strategies: {
     /**
-     * THE strategy — mechanizes the user's real edge (from 256 of their trades:
+     * THE strategy (v2) — the user's ACTUAL edge, found by mining their 124
+     * closing trades: 102/107 winning sells were UNDERDOGS bought cheap (~0.29)
+     * and sold on the pop (~0.58) — roughly doubling. Favorite-backing was a
+     * misread (it's ~breakeven). So: buy a cheap underdog that's SHOWING LIFE
+     * (rising off its opening), take profit on the pop (+75%), and CUT the ones
+     * that fade (-35%) — never bag-hold a dud to zero (their real leak). The
+     * 1-min fast loop keeps the stop tight.
+     */
+    underdog_pop: {
+      enabled: true,
+      track: "underdog",
+      openingThreshold: 0.55, // favorite >= 0.55, so underdog <= 0.45
+      entryMin: 0.12,
+      entryMax: 0.4, // their winning buys clustered 0.10-0.40
+      entryDirection: "rise",
+      minMovePct: 0.1, // must be climbing off its opening (showing momentum/life)
+      minCompletedSets: 0, // ride the pop early; don't wait for a set
+      exitStyle: "relative",
+      takeProfitPct: 0.75, // take the pop (~their 0.29->0.58 was +100%; +75% "one in hand")
+      stopLossPct: 0.35, // cut the fizzlers small, don't ride to $0
+    },
+    /**
+     * (Disabled) mechanizes the user's real edge (from 256 of their trades:
      * favorites +$240, longshots -$95; their best bands 0.7-0.9 were LEADING
      * favorites) plus their own insight: only back a favorite once they're
      * AHEAD ON SETS (won set 1 / closing the match out). That's a much higher,
@@ -157,7 +180,7 @@ export const STRATEGY_CONFIG = {
      * tight -15% stop cuts the ones that turn (backed by the 1-min fast loop).
      */
     back_favorite: {
-      enabled: true,
+      enabled: false, // ~breakeven; favorites weren't the real edge (see underdog_pop)
       track: "favorite",
       openingThreshold: 0.55,
       entryMin: 0.6,
@@ -178,7 +201,7 @@ export const STRATEGY_CONFIG = {
      * losers (then back_favorite beats it). Same markets => clean head-to-head.
      */
     back_favorite_hold: {
-      enabled: true,
+      enabled: false, // A/B done: hold beat stop, but still ~breakeven
       track: "favorite",
       openingThreshold: 0.55,
       entryMin: 0.6,
