@@ -92,7 +92,7 @@ export const FRICTION = {
  * has its own bankroll, stake, and concurrency cap, and its own dashboard
  * section. The same three strategies run inside both books.
  */
-export type TourName = "main" | "itf";
+export type TourName = "main";
 
 export interface TourConfig {
   label: string;
@@ -114,14 +114,8 @@ export const TOURS = {
     startingBankroll: 10,
     maxConcurrent: 18,
   },
-  itf: {
-    label: "ITF Tour",
-    // itfme only — the user's real trades were +$58 on itfme, -$10 on itfwo.
-    tags: ["itfme"],
-    stake: 2,
-    startingBankroll: 10,
-    maxConcurrent: 18,
-  },
+  // ITF dropped: it was a bloodbath (-$92) — thin books, brutal slippage, and
+  // cheap-dog fees. Main tour only for the final narrow test.
 } satisfies Record<TourName, TourConfig>;
 
 export const TOUR_NAMES = Object.keys(TOURS) as TourName[];
@@ -160,8 +154,11 @@ export const STRATEGY_CONFIG = {
       enabled: true,
       track: "underdog",
       openingThreshold: 0.55, // favorite >= 0.55, so underdog <= 0.45
-      entryMin: 0.12,
-      entryMax: 0.4, // their winning buys clustered 0.10-0.40
+      // Narrowed to 0.40-0.50 — the ONLY band that was profitable in the multi-
+      // day run. Cheaper dogs (0.10-0.40) got destroyed by fees + slippage
+      // (fee/stake ≈ 6%×(1-price), so the cheapest bets are the most taxed).
+      entryMin: 0.4,
+      entryMax: 0.5,
       entryDirection: "rise",
       minMovePct: 0.1, // must be climbing off its opening (showing momentum/life)
       minCompletedSets: 0, // ride the pop early; don't wait for a set
